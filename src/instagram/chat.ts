@@ -162,6 +162,10 @@ export function shouldTrigger(messageText: string, isReply: boolean): boolean {
     if (lower.includes(hashtag)) return true;
   }
 
+  for (const keyword of config.triggers.keywords) {
+    if (lower.includes(keyword)) return true;
+  }
+
   if (config.triggers.onReply && isReply) return true;
 
   return false;

@@ -67,6 +67,10 @@ function determinePriority(text: string, isReply: boolean): number {
     if (lower.includes(hashtag)) return 8;
   }
 
+  for (const keyword of config.triggers.keywords) {
+    if (lower.includes(keyword)) return 6;
+  }
+
   if (isReply) return 5;
   return 0;
 }

@@ -41,11 +41,21 @@ const config = Object.freeze({
 
   // Triggers
   triggers: {
-    mentions: env("TRIGGER_MENTIONS", "@auroic.ai")
+    mentions: env("TRIGGER_MENTIONS", "auroic.ai")
       .split(",")
-      .map((t) => t.trim().toLowerCase())
+      .map((t) => {
+        const val = t.trim().toLowerCase();
+        return val && !val.startsWith("@") ? `@${val}` : val;
+      })
       .filter(Boolean),
-    hashtags: env("TRIGGER_HASHTAGS", "#ai")
+    hashtags: env("TRIGGER_HASHTAGS", "ai")
+      .split(",")
+      .map((t) => {
+        const val = t.trim().toLowerCase();
+        return val && !val.startsWith("#") ? `#${val}` : val;
+      })
+      .filter(Boolean),
+    keywords: env("TRIGGER_KEYWORDS", "help,support")
       .split(",")
       .map((t) => t.trim().toLowerCase())
       .filter(Boolean),

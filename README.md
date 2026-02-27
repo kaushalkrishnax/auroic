@@ -23,7 +23,7 @@ Designed for personal or small-group automation with full control over behaviour
 ### Core
 
 - **Multi-chat monitoring** — One dedicated browser tab per conversation. No page reloading, no navigation between chats. Tabs are opened once on startup and monitored in parallel.
-- **Configurable trigger system** — Mention triggers, hashtag triggers, and reply detection — all defined in `.env`. Add as many as you want, comma-separated.
+- **Configurable trigger system** — Mention triggers, hashtag triggers, keyword triggers, and reply detection — all defined in `.env`. Add as many as you want, comma-separated.
 - **OpenAI-compatible API** — Works with Groq, OpenAI, Ollama, LM Studio, or any endpoint that follows the OpenAI chat completions spec.
 - **Native chat history** — Recent messages are sent as native `messages[]` array entries, not crammed into a single prompt string. History is trimmed by both message count and token budget.
 
@@ -69,12 +69,23 @@ Designed for personal or small-group automation with full control over behaviour
 | Google Chrome | Latest stable     |
 | Docker        | ≥ 24 _(optional)_ |
 
-### 1. Start Chrome with remote debugging
+### 1. Start Chrome/Chromium with remote debugging
+
+**For Chrome:**
 
 ```bash
 google-chrome \
   --remote-debugging-port=9222 \
   --user-data-dir="$HOME/.config/google-chrome"
+```
+
+**For Chromium (Alternative):**
+
+```bash
+chromium-browser \
+  --remote-debugging-port=9222 \
+  --remote-debugging-address=0.0.0.0 \
+  --user-data-dir=$HOME/chrome-auroic
 ```
 
 > **Important:** Log into Instagram in this browser session _before_ starting the assistant.
@@ -100,8 +111,12 @@ Edit `.env` — see `.env.example` for all available options with descriptions. 
 ### Docker (recommended)
 
 ```bash
-docker build -t auroic . 
-docker run -d --name auroic auroic
+docker build -t auroic .
+docker run -d \
+  --name auroic \
+  --network=host \
+  --env-file .env \
+  auroic
 ```
 
 ### npm
@@ -140,4 +155,4 @@ All configuration is done through environment variables. See [`.env.example`](.e
 
 ## License
 
-This project is licensed under the **[MIT LICENSE](LICENSE)**. 
+This project is licensed under the **[MIT LICENSE](LICENSE)**.
