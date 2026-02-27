@@ -3,11 +3,11 @@ FROM node:20-slim AS build
 
 WORKDIR /app
 
-# Install dependencies first (layer caching).
+# Install dependencies (layer caching)
 COPY package.json package-lock.json* ./
 RUN npm ci
 
-# Copy source and compile TypeScript.
+# Copy source and compile TypeScript
 COPY tsconfig.json ./
 COPY src ./src
 RUN npx tsc
@@ -23,7 +23,7 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/package.json ./
 
 # Create data directory for SQLite.
-RUN mkdir -p /app/data
+RUN mkdir -p /data
 
 # Run as non-root for security.
 RUN groupadd -r auroic && useradd -r -g auroic auroic

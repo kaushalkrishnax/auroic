@@ -100,8 +100,8 @@ Edit `.env` — see `.env.example` for all available options with descriptions. 
 ### Docker (recommended)
 
 ```bash
-docker compose up -d --build
-docker compose logs -f
+docker build -t auroic . 
+docker run -d --name auroic auroic
 ```
 
 ### npm
