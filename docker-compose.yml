@@ -1,0 +1,15 @@
+services:
+  assistant:
+    build: .
+    container_name: auroic
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Override CDP_URL to reach Chrome on the host machine.
+      CDP_URL: http://host.docker.internal:9222
+      DB_PATH: /app/data/state.db
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # Persist SQLite database across container restarts.
+      - ./data:/app/data
