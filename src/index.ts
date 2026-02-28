@@ -3,6 +3,7 @@
  */
 
 import getConfig, { watchRuntime } from "./config/index.js";
+import { startServer } from "./server.js";
 import logger from "./utils/logger.js";
 import { sleep } from "./utils/delay.js";
 import {
@@ -303,6 +304,7 @@ async function mainLoop(): Promise<void> {
 
 registerShutdown();
 watchRuntime();
+startServer();
 mainLoop().catch((err) => {
   logger.error("Fatal error", {
     error: (err as Error).message,

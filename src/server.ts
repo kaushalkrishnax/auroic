@@ -35,9 +35,11 @@ app.post("/config", async (c) => {
   return c.json({ success: true });
 });
 
-serve({
-  fetch: app.fetch,
-  port: 3789,
-});
+export function startServer() {
+  serve({
+    fetch: app.fetch,
+    port: 3789,
+  });
 
-console.log("⚙️ Config UI running → http://localhost:3789");
+  console.log("⚙️ Config UI running → http://localhost:3789");
+}
