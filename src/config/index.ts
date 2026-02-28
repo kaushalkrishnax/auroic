@@ -13,9 +13,9 @@ const int = (key: string, fallback: number): number =>
   parseInt(env(key, String(fallback)), 10);
 
 const config = Object.freeze({
-  // Chrome DevTools Protocol
-  cdp: {
-    url: env("CDP_URL", "http://localhost:9222"),
+  // Chromium Settings
+  chromium: {
+    profileDir: env("CHROMIUM_PROFILE_DIR", "./data/chrome-auroic")
   },
 
   // AI API
@@ -33,6 +33,7 @@ const config = Object.freeze({
   // Instagram
   instagram: {
     username: env("INSTAGRAM_USERNAME", ""),
+    password: env("INSTAGRAM_PASSWORD", ""),
     chatIds: env("CHAT_IDS", "")
       .split(",")
       .map((id) => id.trim())
@@ -69,9 +70,7 @@ const config = Object.freeze({
 
   // Typing simulation
   typing: {
-    minDelayMs: int("TYPING_MIN_DELAY_MS", 30),
-    maxDelayMs: int("TYPING_MAX_DELAY_MS", 120),
-    postResponseMs: int("TYPING_POST_RESPONSE_MS", 1_500),
+    postResponseDelayMs: int("TYPING_POST_RESPONSE_DELAY_MS", 1_500),
   },
 
   // Rate limiting

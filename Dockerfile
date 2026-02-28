@@ -1,32 +1,24 @@
-# Build stage
-FROM node:20-slim AS build
-
-WORKDIR /app
-
-COPY package.json package-lock.json* ./
-RUN npm ci
-
-COPY tsconfig.json ./
-COPY src ./src
-RUN npx tsc
-
-# Runtime stage
 FROM node:20-slim
 
 WORKDIR /app
 
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/dist ./dist
-COPY --from=build /app/package.json ./
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
-# Create app data directory
-RUN mkdir -p /app/data
+COPY package.json package-lock.json* ./
+RUN npm ci
 
-# Create non-root user
-RUN groupadd -r auroic && useradd -r -g auroic auroic
+RUN npx playwright install-deps chromium-headless-shell
 
-# Fix permissions
-RUN chown -R auroic:auroic /app
+COPY tsconfig.json ./
+COPY src ./src
+RUN npm run build && npm prune --omit=dev
+
+RUN mkdir -p /app/data \
+  && groupadd -r auroic \
+  && useradd -r -g auroic auroic \
+  && chown -R auroic:auroic /app \
+  && chown -R auroic:auroic /ms-playwright
 
 USER auroic
 

@@ -2,10 +2,9 @@
  * Instagram navigation helpers.
  */
 
-import type { Page } from "playwright-core";
+import type { Page } from "playwright";
 import SELECTORS from "./selectors.js";
 import logger from "../utils/logger.js";
-import { randomDelay } from "../utils/delay.js";
 
 export async function navigateToChat(
   page: Page,
@@ -33,6 +32,5 @@ export async function navigateToChat(
   }
 
   await page.waitForSelector(SELECTORS.messageInput, { timeout: 15_000 });
-  await randomDelay(1_000, 2_000);
   logger.info("Chat loaded", { chatId });
 }

@@ -4,9 +4,9 @@
 
 ---
 
-### 🤖 Built with Claude Opus 4.6
+### 🤖 Foundation with Claude Opus 4.6
 
-Auroic was coded entirely by **Claude Opus 4.6** (Anthropic), guided through iterative development by a single human developer — **[Kaushal Krishna](https://github.com/kaushalkrishnax)**. Every feature, architecture decision, and module was born from a conversation: the developer described what he wanted, reviewed the output, requested changes, and pushed the code forward step by step. No boilerplate generators, no copy-paste — just a human directing an AI through real engineering decisions over dozens of iterations.
+**Auroic** is fundamentally built with **Claude Opus 4.6 (Anthropic)** under the direction of a single developer — **[Kaushal Krishna](https://github.com/kaushalkrishnax)**. The project evolved through iterative conversations, where the developer defined goals, reviewed outputs, and refined the system step by step, resulting in a fully engineered product guided by human decisions and AI execution.
 
 ---
 
@@ -69,42 +69,13 @@ Designed for personal or small-group automation with full control over behaviour
 | Google Chrome | Latest stable     |
 | Docker        | ≥ 24 _(optional)_ |
 
-### 1. Start Chrome/Chromium with remote debugging
-
-**For Chrome:**
-
-```bash
-google-chrome \
-  --remote-debugging-port=9222 \
-  --user-data-dir="$HOME/.config/google-chrome"
-```
-
-**For Chromium (Alternative):**
-
-```bash
-chromium-browser \
-  --remote-debugging-port=9222 \
-  --remote-debugging-address=0.0.0.0 \
-  --user-data-dir=$HOME/chrome-auroic
-```
-
-> **Important:** Log into Instagram in this browser session _before_ starting the assistant.
-
-### 2. Configure
+## Configuration
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` — see `.env.example` for all available options with descriptions. At minimum, set:
-
-- `INSTAGRAM_USERNAME`
-- `AI_API_URL`
-- `AI_API_KEY`
-- `AI_API_MODEL`
-- `CHAT_IDS`
-
----
+All configuration is done through environment variables. See [`.env.example`](.env.example) for the complete list with defaults and descriptions.
 
 ## Deployment
 
@@ -123,23 +94,11 @@ docker run -d \
 
 ```bash
 npm install
-node src/index.js
+npm run build
+node dist/index.js
 ```
 
-### Bun
-
-```bash
-bun install
-bun run dev
-```
-
-All three methods are fully supported. The `dev` script uses `--watch` for auto-restart on code changes.
-
----
-
-## Configuration
-
-All configuration is done through environment variables. See [`.env.example`](.env.example) for the complete list with defaults and descriptions.
+Both methods are fully supported. The `dev` script uses `--watch` for auto-restart on code changes.
 
 ---
 

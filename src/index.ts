@@ -4,7 +4,7 @@
 
 import config from "./config/index.js";
 import logger from "./utils/logger.js";
-import { randomDelay, sleep } from "./utils/delay.js";
+import { sleep } from "./utils/delay.js";
 import {
   connectBrowser,
   openChatTabs,
@@ -18,9 +18,10 @@ import {
   shouldTrigger,
   messageFingerprint,
   sendMessage,
+  getUnrepliedTriggerMessages,
 } from "./instagram/chat.js";
 import { getAIReply } from "./ai/client.js";
-import { startTypingSimulation } from "./typing/simulator.js";
+import { simulateTyping } from "./typing/simulator.js";
 import {
   isOnCooldown,
   recordRequest,
@@ -34,9 +35,9 @@ import {
   pruneOldRecords,
   closeDB,
 } from "./state/db.js";
-import type { Page } from "playwright-core";
+import type { Page } from "playwright";
 
-// Shutdown handling
+// Shutdown─
 
 let shuttingDown = false;
 
@@ -54,126 +55,168 @@ function registerShutdown(): void {
   process.on("SIGTERM", () => shutdown("SIGTERM"));
 }
 
-// Priority determination
+// Priority─
 
 function determinePriority(text: string, isReply: boolean): number {
   const lower = text.toLowerCase();
 
-  for (const mention of config.triggers.mentions) {
-    if (lower.includes(mention)) return 10;
-  }
-
-  for (const hashtag of config.triggers.hashtags) {
-    if (lower.includes(hashtag)) return 8;
-  }
-
-  for (const keyword of config.triggers.keywords) {
-    if (lower.includes(keyword)) return 6;
-  }
-
+  if (config.triggers.mentions.some((m) => lower.includes(m))) return 10;
+  if (config.triggers.hashtags.some((h) => lower.includes(h))) return 8;
+  if (config.triggers.keywords.some((k) => lower.includes(k))) return 6;
   if (isReply) return 5;
   return 0;
 }
 
-// Process a single chat by its dedicated page
+// Shared reply dispatcher ─────────────────────────────────────────────────
+
+interface ReplyJob {
+  page: Page;
+  chatId: string;
+  sender: string;
+  text: string;
+  history: string[];
+  fingerprint: string;
+  isReply: boolean;
+}
+
+async function dispatchReply(job: ReplyJob): Promise<void> {
+  const { page, chatId, sender, text, history, fingerprint, isReply } = job;
+
+  if (isOnCooldown(sender)) {
+    logger.info("⏳ User on cooldown — skipping", { chatId, user: sender });
+    return;
+  }
+
+  const priority = determinePriority(text, isReply);
+
+  logger.info("🔔 Trigger detected", {
+    chatId,
+    username: sender,
+    text: text.substring(0, 80),
+    priority,
+  });
+
+  const typing = simulateTyping(page);
+
+  let reply: string;
+  try {
+    reply = await getAIReply({
+      user: sender,
+      message: text,
+      history,
+      conversationId: chatId,
+      priority,
+    });
+  } catch (err) {
+    logger.error("AI API failed — skipping", {
+      chatId,
+      error: (err as Error).message,
+    });
+    markProcessed(fingerprint, chatId);
+    return;
+  }
+
+  await typing.stop();
+  recordRequest(sender);
+  await sendMessage(page, reply, text);
+  markProcessed(fingerprint, chatId);
+
+  logger.info("✅ Reply delivered", {
+    chatId,
+    username: sender,
+    replyLength: reply.length,
+  });
+}
+
+// Chat processors ─────────────────────────────────────────────────────────
+
+async function processUnrepliedTriggers(
+  page: Page,
+  chatId: string,
+): Promise<void> {
+  const unreplied = await getUnrepliedTriggerMessages(
+    page,
+    config.instagram.username,
+  );
+
+  const triggered = unreplied.filter((msg) => shouldTrigger(msg.text, false));
+  if (!triggered.length) return;
+
+  logger.info(`Found ${triggered.length} unreplied trigger message(s)`, {
+    chatId,
+  });
+
+  for (const msg of triggered) {
+    const fingerprint = messageFingerprint(
+      chatId,
+      msg.sender,
+      msg.text,
+      msg.index,
+    );
+    if (isProcessed(fingerprint)) continue;
+
+    await dispatchReply({
+      page,
+      chatId,
+      sender: msg.sender,
+      text: msg.text,
+      history: [msg.text],
+      fingerprint,
+      isReply: false,
+    });
+  }
+}
 
 async function processChat(page: Page, chatId: string): Promise<void> {
-  const lastData = await getLastMessageData(page, config.instagram.username);
+  await processUnrepliedTriggers(page, chatId);
 
-  if (!lastData || !lastData.text) {
+  const lastData = await getLastMessageData(page, config.instagram.username);
+  if (!lastData?.text) {
     logger.debug("No message text found in chat", { chatId });
     return;
   }
 
-  const { text: lastText, count: messageCount, history, lastSender } = lastData;
+  const { text, count, history, lastSender } = lastData;
 
-  logger.info("Latest Message Found", {
+  logger.info("Latest message found", {
     chatId,
     username: lastSender,
-    text: lastText,
-    count: messageCount,
+    text,
+    count,
   });
 
-  const fingerprintId = messageFingerprint(
-    chatId,
-    lastSender,
-    lastText,
-    messageCount,
-  );
-  if (isProcessed(fingerprintId)) {
+  const fingerprint = messageFingerprint(chatId, lastSender, text, count);
+
+  if (isProcessed(fingerprint)) {
     logger.debug("Message already processed — skipping", { chatId });
     return;
   }
 
   if (lastSender === config.instagram.username) {
     logger.debug("Last message is from bot — skipping", { chatId });
-    markProcessed(fingerprintId, chatId);
-    return;
-  }
-
-  if (isOnCooldown(lastSender)) {
-    logger.info("⏳ User on cooldown — skipping", { chatId, user: lastSender });
+    markProcessed(fingerprint, chatId);
     return;
   }
 
   const isReply = await isLastMessageReply(page);
 
-  if (!shouldTrigger(lastText, isReply)) {
+  if (!shouldTrigger(text, isReply)) {
     logger.debug("No trigger matched — skipping", {
       chatId,
-      text: lastText.substring(0, 50),
+      text: text.substring(0, 50),
     });
-    markProcessed(fingerprintId, chatId);
+    markProcessed(fingerprint, chatId);
     return;
   }
 
-  const priority = determinePriority(lastText, isReply);
-
-  logger.info("🔔 Trigger detected!", {
+  await dispatchReply({
+    page,
     chatId,
-    username: lastSender,
-    text: lastText.substring(0, 80),
-    count: messageCount,
-    priority,
-  });
-
-  const typing = startTypingSimulation(page);
-
-  let reply: string;
-  try {
-    reply = await getAIReply({
-      user: lastSender,
-      message: lastText,
-      history,
-      conversationId: chatId,
-      priority,
-    });
-  } catch (err) {
-    logger.error("AI API failed after retries — skipping conversation", {
-      chatId,
-      error: (err as Error).message,
-    });
-    try {
-      await typing.finishAfterResponse("");
-    } catch {
-      /* best-effort cleanup */
-    }
-    markProcessed(fingerprintId, chatId);
-    return;
-  }
-
-  recordRequest(lastSender);
-  await typing.finishAfterResponse(reply);
-
-  await randomDelay(300, 700);
-  await sendMessage(page, reply);
-
-  markProcessed(fingerprintId, chatId);
-
-  logger.info("✅ Reply delivered", {
-    chatId,
-    username: lastSender,
-    replyLength: reply.length,
+    sender: lastSender,
+    text,
+    history,
+    fingerprint,
+    isReply,
   });
 }
 
@@ -225,7 +268,6 @@ async function mainLoop(): Promise<void> {
         }
 
         await processChat(page, chatId);
-        await randomDelay(500, 1_000);
       }
     } catch (err) {
       logger.error("Error during poll cycle", {
@@ -240,8 +282,7 @@ async function mainLoop(): Promise<void> {
     }
 
     if (cycleCount % 10 === 0) {
-      const metrics = getMetrics();
-      logger.info("📊 Rate limiter metrics", metrics);
+      logger.info("📊 Rate limiter metrics", getMetrics());
     }
 
     logger.debug(`Sleeping ${config.poll.intervalMs}ms before next poll…`);
