@@ -1,7 +1,7 @@
 import type { Page } from "playwright";
 import SELECTORS from "../instagram/selectors.js";
 import { sleep } from "../utils/delay.js";
-import config from "../config/index.js";
+import getConfig from "../config/index.js";
 
 export function simulateTyping(page: Page) {
   let stopped = false;
@@ -19,7 +19,7 @@ export function simulateTyping(page: Page) {
 
   return {
     stop: async () => {
-      await sleep(config.typing.postResponseDelayMs);
+      await sleep(getConfig().typing.postResponseDelayMs);
       stopped = true;
       await run;
     },

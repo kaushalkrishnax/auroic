@@ -7,7 +7,7 @@ import fs from "fs";
 import { chromium } from "playwright";
 import type { Browser, BrowserContext, Page } from "playwright";
 import logger from "../utils/logger.js";
-import config from "../config/index.js";
+import getConfig from "../config/index.js";
 import SELECTORS from "../instagram/selectors.js";
 
 let _browser: Browser | null = null;
@@ -21,16 +21,14 @@ export async function connectBrowser(): Promise<{
     return { context: _context };
   }
 
+  const config = getConfig();
   const profileDir = config.chromium.profileDir;
 
   fs.mkdirSync(profileDir, { recursive: true });
 
-  logger.info(
-    `Launching Headless Chromium…`,
-    {
-      profileDir,
-    },
-  );
+  logger.info(`Launching Headless Chromium…`, {
+    profileDir,
+  });
 
   const context = await chromium.launchPersistentContext(profileDir, {
     headless: true,
@@ -141,6 +139,7 @@ export async function openChatTabs(
 }
 
 async function performLogin(page: Page): Promise<void> {
+  const config = getConfig();
   logger.info("Logging in…");
 
   await page.waitForSelector(SELECTORS.emailInput, {
@@ -170,14 +169,67 @@ export function getChatPage(chatId: string): Page | undefined {
 }
 
 export async function ensureChatTabs(chatIds: string[]): Promise<void> {
+  const { context } = await connectBrowser();
+
+  // Close and remove chats that are no longer in chatIds
+  const toRemove = Array.from(_chatPages.keys()).filter(
+    (id) => !chatIds.includes(id),
+  );
+  for (const id of toRemove) {
+    const page = _chatPages.get(id);
+    if (page && !page.isClosed()) {
+      await page.close().catch(() => {});
+    }
+    _chatPages.delete(id);
+    logger.info("Closed chat tab for removed chatId", { chatId: id });
+  }
+
+  // Also close any stray/untracked tabs in the browser context
+  const trackedPages = Array.from(_chatPages.values());
+  for (const page of context.pages()) {
+    if (!trackedPages.includes(page) && !page.isClosed()) {
+      await page.close().catch(() => {});
+      logger.info("Closed stray/untracked browser tab");
+    }
+  }
+
+  // Open or re-open missed chats
   const deadChats = chatIds.filter((id) => {
     const page = _chatPages.get(id);
     return !page || page.isClosed();
   });
 
   if (deadChats.length > 0) {
-    logger.warn("Re-opening dead chat tabs", { chatIds: deadChats });
-    await openChatTabs(deadChats);
+    logger.warn("Opening dead/new chat tabs", { chatIds: deadChats });
+
+    for (const chatId of deadChats) {
+      if (_chatPages.has(chatId)) {
+        _chatPages.delete(chatId);
+      }
+
+      const chatUrl = `https://www.instagram.com/direct/t/${chatId}/`;
+      logger.info("Opening tab for chat…", { chatId });
+
+      const page = await context.newPage();
+
+      await page.goto(chatUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: 60_000,
+      });
+
+      const notNowButton = page.locator(SELECTORS.notNowButton);
+      if (await notNowButton.count()) {
+        await notNowButton.click();
+        logger.info("Not now clicked");
+      }
+
+      await page.waitForSelector('div[contenteditable="true"]', {
+        timeout: 30_000,
+      });
+
+      logger.info("Chat tab ready", { chatId });
+      _chatPages.set(chatId, page);
+    }
   }
 }
 

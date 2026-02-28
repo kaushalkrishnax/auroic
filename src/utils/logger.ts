@@ -3,10 +3,9 @@
  */
 
 import { createLogger, format, transports } from "winston";
-import config from "../config/index.js";
 
 const logger = createLogger({
-  level: config.log.level,
+  level: process.env.LOG_LEVEL ?? "info",
   format: format.combine(
     format.timestamp({ format: "YYYY-MM-DD HH:mm:ss" }),
     format.errors({ stack: true }),

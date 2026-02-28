@@ -3,7 +3,7 @@
  * Enforces MAX_REQUESTS_PER_MIN and MAX_TOKENS_PER_MIN.
  */
 
-import config from "../config/index.js";
+import getConfig from "../config/index.js";
 import logger from "../utils/logger.js";
 import { sleep } from "../utils/delay.js";
 
@@ -54,7 +54,7 @@ function msUntilSlotAvailable(estimatedTokens: number): number {
   pruneWindow(requestLog, now);
   pruneWindow(tokenLog, now);
 
-  const { maxRequestsPerMin, maxTokensPerMin } = config.rateLimit;
+  const { maxRequestsPerMin, maxTokensPerMin } = getConfig().rateLimit;
   let waitMs = 0;
 
   if (requestLog.length >= maxRequestsPerMin) {

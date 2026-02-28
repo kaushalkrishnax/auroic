@@ -2,7 +2,7 @@
  * Main orchestrator — Auroic Instagram AI Assistant.
  */
 
-import config from "./config/index.js";
+import getConfig, { watchRuntime } from "./config/index.js";
 import logger from "./utils/logger.js";
 import { sleep } from "./utils/delay.js";
 import {
@@ -37,7 +37,7 @@ import {
 } from "./state/db.js";
 import type { Page } from "playwright";
 
-// Shutdown─
+// Shutdown
 
 let shuttingDown = false;
 
@@ -55,19 +55,21 @@ function registerShutdown(): void {
   process.on("SIGTERM", () => shutdown("SIGTERM"));
 }
 
-// Priority─
+// Priority
 
 function determinePriority(text: string, isReply: boolean): number {
+  const config = getConfig();
   const lower = text.toLowerCase();
 
-  if (config.triggers.mentions.some((m) => lower.includes(m))) return 10;
-  if (config.triggers.hashtags.some((h) => lower.includes(h))) return 8;
-  if (config.triggers.keywords.some((k) => lower.includes(k))) return 6;
+  if (config.triggers.mentions.some((m: string) => lower.includes(m)))
+    return 10;
+  if (config.triggers.hashtags.some((h: string) => lower.includes(h))) return 8;
+  if (config.triggers.keywords.some((k: string) => lower.includes(k))) return 6;
   if (isReply) return 5;
   return 0;
 }
 
-// Shared reply dispatcher ─────────────────────────────────────────────────
+// Shared reply dispatcher
 
 interface ReplyJob {
   page: Page;
@@ -128,7 +130,7 @@ async function dispatchReply(job: ReplyJob): Promise<void> {
   });
 }
 
-// Chat processors ─────────────────────────────────────────────────────────
+// Chat processors
 
 async function processUnrepliedTriggers(
   page: Page,
@@ -136,7 +138,7 @@ async function processUnrepliedTriggers(
 ): Promise<void> {
   const unreplied = await getUnrepliedTriggerMessages(
     page,
-    config.instagram.username,
+    getConfig().instagram.username,
   );
 
   const triggered = unreplied.filter((msg) => shouldTrigger(msg.text, false));
@@ -170,6 +172,7 @@ async function processUnrepliedTriggers(
 async function processChat(page: Page, chatId: string): Promise<void> {
   await processUnrepliedTriggers(page, chatId);
 
+  const config = getConfig();
   const lastData = await getLastMessageData(page, config.instagram.username);
   if (!lastData?.text) {
     logger.debug("No message text found in chat", { chatId });
@@ -225,19 +228,23 @@ async function processChat(page: Page, chatId: string): Promise<void> {
 async function mainLoop(): Promise<void> {
   logger.info("Starting Auroic Instagram AI Assistant…");
 
-  const { chatIds } = config.instagram;
-  if (!chatIds.length) {
-    logger.error("No CHAT_IDS configured — set CHAT_IDS in your .env file");
-    process.exit(1);
+  const initialChatIds = getConfig().instagram.chatIds.filter(Boolean);
+  if (!initialChatIds.length) {
+    logger.warn("No CHAT_IDS configured initially.");
+  } else {
+    logger.info(`Monitoring ${initialChatIds.length} chat(s) initially`, {
+      chatIds: initialChatIds,
+    });
   }
-  logger.info(`Monitoring ${chatIds.length} chat(s)`, { chatIds });
 
   initDB();
   pruneOldRecords();
 
   try {
     await connectBrowser();
-    await openChatTabs(chatIds);
+    if (initialChatIds.length > 0) {
+      await openChatTabs(initialChatIds);
+    }
   } catch (err) {
     logger.error("Failed to connect to Chrome or open tabs — exiting", {
       error: (err as Error).message,
@@ -245,7 +252,7 @@ async function mainLoop(): Promise<void> {
     process.exit(1);
   }
 
-  logger.info(`All ${chatIds.length} chat tab(s) ready — starting poll loop`);
+  logger.info(`Browser connected — starting poll loop`);
 
   let cycleCount = 0;
 
@@ -254,9 +261,10 @@ async function mainLoop(): Promise<void> {
     logger.info(`Poll cycle #${cycleCount}`);
 
     try {
-      await ensureChatTabs(chatIds);
+      const currentChatIds = getConfig().instagram.chatIds.filter(Boolean);
+      await ensureChatTabs(currentChatIds);
 
-      for (const chatId of chatIds) {
+      for (const chatId of currentChatIds) {
         if (shuttingDown) break;
 
         const page = getChatPage(chatId);
@@ -285,14 +293,16 @@ async function mainLoop(): Promise<void> {
       logger.info("📊 Rate limiter metrics", getMetrics());
     }
 
-    logger.debug(`Sleeping ${config.poll.intervalMs}ms before next poll…`);
-    await sleep(config.poll.intervalMs);
+    const pollMs = getConfig().poll.intervalMs;
+    logger.debug(`Sleeping ${pollMs}ms before next poll…`);
+    await sleep(pollMs);
   }
 }
 
 // Bootstrap
 
 registerShutdown();
+watchRuntime();
 mainLoop().catch((err) => {
   logger.error("Fatal error", {
     error: (err as Error).message,

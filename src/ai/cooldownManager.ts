@@ -3,7 +3,7 @@
  * Prevents rapid repeated AI calls from the same user.
  */
 
-import config from "../config/index.js";
+import getConfig from "../config/index.js";
 import logger from "../utils/logger.js";
 
 const cooldowns = new Map<string, number>();
@@ -13,7 +13,7 @@ export function isOnCooldown(userId: string): boolean {
   if (!last) return false;
 
   const elapsed = Date.now() - last;
-  const remaining = config.cooldown.userCooldownMs - elapsed;
+  const remaining = getConfig().cooldown.userCooldownMs - elapsed;
 
   if (remaining > 0) {
     logger.debug("User on cooldown", { userId, remainingMs: remaining });
@@ -30,13 +30,13 @@ export function recordRequest(userId: string): void {
 export function getRemainingCooldown(userId: string): number {
   const last = cooldowns.get(userId);
   if (!last) return 0;
-  return Math.max(0, config.cooldown.userCooldownMs - (Date.now() - last));
+  return Math.max(0, getConfig().cooldown.userCooldownMs - (Date.now() - last));
 }
 
 export function pruneCooldowns(): void {
   const now = Date.now();
   for (const [userId, ts] of cooldowns) {
-    if (now - ts > config.cooldown.userCooldownMs * 2) {
+    if (now - ts > getConfig().cooldown.userCooldownMs * 2) {
       cooldowns.delete(userId);
     }
   }

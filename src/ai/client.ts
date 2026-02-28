@@ -6,7 +6,7 @@
  */
 
 import axios from "axios";
-import config from "../config/index.js";
+import getConfig from "../config/index.js";
 import logger from "../utils/logger.js";
 import { retry } from "../utils/retry.js";
 import { estimateTokens, estimateMessagesTokens } from "./tokenEstimator.js";
@@ -18,6 +18,7 @@ import type { ChatMessage } from "./tokenEstimator.js";
 function trimHistory(history: string[]): string[] {
   if (!history || history.length === 0) return [];
 
+  const config = getConfig();
   let trimmed = history.slice(-config.history.maxMessages);
 
   const maxTokens = config.history.maxTokens;
@@ -48,6 +49,7 @@ export async function getAIReply({
   conversationId,
   priority = 0,
 }: GetAIReplyParams): Promise<string> {
+  const config = getConfig();
   const trimmedHistory = trimHistory(history);
 
   logger.info("Sending message to AI API", {

@@ -3,7 +3,7 @@
  * Combines multiple messages from the same conversation within BATCH_WINDOW_MS.
  */
 
-import config from "../config/index.js";
+import getConfig from "../config/index.js";
 import logger from "../utils/logger.js";
 
 interface BatchEntry {
@@ -41,14 +41,14 @@ export function addMessage(
       messages: [message],
       timer: setTimeout(() => {
         flush(conversationId);
-      }, config.batching.windowMs),
+      }, getConfig().batching.windowMs),
       resolve,
     };
 
     batches.set(conversationId, entry);
     logger.debug("Batch started", {
       conversationId,
-      windowMs: config.batching.windowMs,
+      windowMs: getConfig().batching.windowMs,
     });
   });
 }

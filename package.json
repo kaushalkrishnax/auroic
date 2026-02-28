@@ -6,8 +6,8 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "tsx --watch src/index.ts",
+    "start": "node dist/index.js & node dist/server.js",
+    "dev": "tsx --watch src/index.ts & tsx --watch src/server.ts",
     "check": "tsc --noEmit",
     "postinstall": "npx playwright install chromium-headless-shell"
   },
@@ -20,9 +20,11 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "@hono/node-server": "^1.19.9",
     "axios": "^1.13.6",
     "better-sqlite3": "^11.10.0",
     "dotenv": "^16.6.1",
+    "hono": "^4.12.3",
     "playwright": "^1.58.2",
     "winston": "^3.19.0"
   },

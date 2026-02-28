@@ -1,0 +1,46 @@
+{
+  "ai": {
+    "model": "llama-3.1-8b-instant",
+    "systemPrompt": "You are Auroic, a smart and friendly participant in conversations. Talk like a real person, not an assistant. Be natural, relaxed, and easy to talk to. Match the tone of the chat and keep replies concise unless more detail is useful. Use simple language. Light humor is fine when it fits.",
+    "timeout": 30000
+  },
+  "instagram": {
+    "chatIds": []
+  },
+  "triggers": {
+    "mentions": ["@auroic.ai", "@bot"],
+    "hashtags": ["#bot"],
+    "keywords": ["hi auroic", "hello auroic"],
+    "onReply": true
+  },
+  "poll": {
+    "intervalMs": 2000
+  },
+  "typing": {
+    "postResponseDelayMs": 2000
+  },
+  "rateLimit": {
+    "maxRequestsPerMin": 30,
+    "maxTokensPerMin": 60000
+  },
+  "history": {
+    "maxMessages": 10,
+    "maxTokens": 2000
+  },
+  "batching": {
+    "windowMs": 4000
+  },
+  "cooldown": {
+    "userCooldownMs": 5000
+  },
+  "output": {
+    "maxTokens": 300
+  },
+  "retry": {
+    "maxAttempts": 3,
+    "baseDelayMs": 1000
+  },
+  "log": {
+    "level": "info"
+  }
+}

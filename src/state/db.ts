@@ -6,7 +6,7 @@
 import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
-import config from "../config/index.js";
+import getConfig from "../config/index.js";
 import logger from "../utils/logger.js";
 
 let _db: Database.Database | null = null;
@@ -14,6 +14,7 @@ let _db: Database.Database | null = null;
 export function initDB(): Database.Database {
   if (_db) return _db;
 
+  const config = getConfig();
   const dir = path.dirname(config.db.path);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });

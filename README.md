@@ -75,7 +75,7 @@ Designed for personal or small-group automation with full control over behaviour
 cp .env.example .env
 ```
 
-All configuration is done through environment variables. See [`.env.example`](.env.example) for the complete list with defaults and descriptions.
+Boot configuration is done through environment variables. See [`.env.example`](.env.example).
 
 ## Deployment
 

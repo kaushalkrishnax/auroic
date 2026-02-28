@@ -7,7 +7,7 @@
 
 import type { Page } from "playwright";
 import SELECTORS from "./selectors.js";
-import config from "../config/index.js";
+import getConfig from "../config/index.js";
 import logger from "../utils/logger.js";
 
 export interface LastMessageData {
@@ -157,6 +157,7 @@ export async function isLastMessageReply(page: Page): Promise<boolean> {
 }
 
 export function shouldTrigger(messageText: string, isReply: boolean): boolean {
+  const config = getConfig();
   const lower = messageText.toLowerCase();
 
   for (const mention of config.triggers.mentions) {
