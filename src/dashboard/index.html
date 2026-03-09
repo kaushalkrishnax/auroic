@@ -1,0 +1,1296 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Auroic Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #0d0d0f;
+        --surface: #16161a;
+        --border: #252530;
+        --muted: #40404f;
+        --text: #e0e0f0;
+        --subtle: #888899;
+        --accent: #7c6fff;
+        --green: #4caf8a;
+        --red: #e05555;
+        --yellow: #e0b055;
+        --mono: "IBM Plex Mono", monospace;
+        --sans: "IBM Plex Sans", sans-serif;
+        --sidebar-w: 220px;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family: var(--sans);
+        background: var(--bg);
+        color: var(--text);
+        display: flex;
+        height: 100vh;
+        overflow: hidden;
+      }
+
+      /* ─── Sidebar ──────────────────────────────────────────────────────── */
+      aside {
+        width: var(--sidebar-w);
+        flex-shrink: 0;
+        background: var(--surface);
+        border-right: 1px solid var(--border);
+        display: flex;
+        flex-direction: column;
+        padding: 0;
+        overflow-y: auto;
+      }
+      .sidebar-logo {
+        padding: 18px 20px 14px;
+        font-family: var(--mono);
+        font-size: 15px;
+        font-weight: 500;
+        letter-spacing: 0.08em;
+        color: var(--accent);
+        border-bottom: 1px solid var(--border);
+      }
+      .sidebar-logo span {
+        color: var(--subtle);
+        font-size: 10px;
+        display: block;
+        margin-top: 2px;
+      }
+      .conn-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 10px;
+        font-family: var(--mono);
+        color: var(--subtle);
+        padding: 8px 20px;
+        border-bottom: 1px solid var(--border);
+      }
+      .conn-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--muted);
+      }
+      .conn-dot.live {
+        background: var(--green);
+        box-shadow: 0 0 4px var(--green);
+      }
+      nav {
+        flex: 1;
+        padding: 8px 0;
+      }
+      .nav-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 9px 20px;
+        cursor: pointer;
+        font-size: 13.5px;
+        color: var(--subtle);
+        transition:
+          background 0.1s,
+          color 0.1s;
+        gap: 8px;
+      }
+      .nav-item:hover {
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--text);
+      }
+      .nav-item.active {
+        background: rgba(124, 111, 255, 0.12);
+        color: var(--accent);
+      }
+      .nav-item .icon {
+        font-size: 14px;
+        min-width: 16px;
+      }
+      .nav-badge {
+        background: var(--accent);
+        color: #fff;
+        font-size: 10px;
+        font-family: var(--mono);
+        border-radius: 9px;
+        padding: 1px 6px;
+        min-width: 20px;
+        text-align: center;
+      }
+      .nav-badge.new {
+        background: var(--green);
+        animation: pulse 0.8s ease-in-out infinite alternate;
+      }
+      @keyframes pulse {
+        from {
+          opacity: 1;
+        }
+        to {
+          opacity: 0.5;
+        }
+      }
+      .sidebar-footer {
+        padding: 14px 20px;
+        border-top: 1px solid var(--border);
+        font-size: 11px;
+        color: var(--muted);
+        font-family: var(--mono);
+      }
+
+      /* ─── Main ─────────────────────────────────────────────────────────── */
+      main {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        overflow: hidden;
+      }
+      .topbar {
+        height: 52px;
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        padding: 0 24px;
+        gap: 12px;
+        flex-shrink: 0;
+      }
+      .topbar h1 {
+        font-size: 15px;
+        font-weight: 600;
+        flex: 1;
+      }
+      .topbar input {
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 6px 12px;
+        color: var(--text);
+        font-size: 13px;
+        width: 200px;
+        font-family: var(--mono);
+      }
+      .topbar input:focus {
+        outline: none;
+        border-color: var(--accent);
+      }
+      .btn {
+        background: var(--accent);
+        color: #fff;
+        border: none;
+        border-radius: 6px;
+        padding: 7px 16px;
+        font-size: 13px;
+        cursor: pointer;
+        font-family: var(--sans);
+        font-weight: 500;
+      }
+      .btn:hover {
+        opacity: 0.85;
+      }
+      .btn.secondary {
+        background: var(--border);
+        color: var(--text);
+      }
+      .content {
+        flex: 1;
+        overflow-y: auto;
+        padding: 20px 24px;
+      }
+
+      /* ─── Cards / tables ───────────────────────────────────────────────── */
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+        gap: 14px;
+        margin-bottom: 24px;
+      }
+      .stat-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 18px 20px;
+      }
+      .stat-card .val {
+        font-family: var(--mono);
+        font-size: 26px;
+        font-weight: 500;
+        color: var(--accent);
+      }
+      .stat-card .lbl {
+        font-size: 12px;
+        color: var(--subtle);
+        margin-top: 4px;
+      }
+
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        overflow: hidden;
+        margin-bottom: 20px;
+      }
+      .card-header {
+        padding: 12px 18px;
+        border-bottom: 1px solid var(--border);
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--subtle);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+      th {
+        padding: 10px 16px;
+        text-align: left;
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--muted);
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        border-bottom: 1px solid var(--border);
+      }
+      td {
+        padding: 10px 16px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+        color: var(--text);
+        font-family: var(--mono);
+        font-size: 12px;
+        vertical-align: top;
+        max-width: 300px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      tr:last-child td {
+        border-bottom: none;
+      }
+      tr:hover td {
+        background: rgba(255, 255, 255, 0.02);
+      }
+      .tag {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-family: var(--mono);
+      }
+      .tag.text {
+        background: rgba(124, 111, 255, 0.15);
+        color: var(--accent);
+      }
+      .tag.ignore {
+        background: rgba(64, 64, 79, 0.4);
+        color: var(--subtle);
+      }
+      .tag.react {
+        background: rgba(224, 176, 85, 0.15);
+        color: var(--yellow);
+      }
+      .tag.ack {
+        background: rgba(76, 175, 138, 0.15);
+        color: var(--green);
+      }
+      .tag.media {
+        background: rgba(224, 85, 85, 0.15);
+        color: var(--red);
+      }
+      .empty {
+        padding: 40px;
+        text-align: center;
+        color: var(--muted);
+        font-size: 13px;
+        font-family: var(--mono);
+      }
+
+      /* ─── Live feed ────────────────────────────────────────────────────── */
+      .live-feed {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .feed-item {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 10px 14px;
+        font-family: var(--mono);
+        font-size: 12px;
+        animation: slideIn 0.25s ease-out;
+      }
+      .feed-item .feed-time {
+        color: var(--muted);
+        font-size: 10px;
+        float: right;
+      }
+      .feed-item .feed-type {
+        color: var(--accent);
+        margin-right: 8px;
+      }
+      @keyframes slideIn {
+        from {
+          opacity: 0;
+          transform: translateY(-6px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+
+      /* ─── Config editor ────────────────────────────────────────────────── */
+      .config-editor {
+        display: flex;
+        gap: 20px;
+      }
+      .config-nav {
+        width: 180px;
+        flex-shrink: 0;
+      }
+      .config-nav-item {
+        padding: 8px 12px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 13px;
+        color: var(--subtle);
+        transition:
+          background 0.1s,
+          color 0.1s;
+        margin-bottom: 2px;
+      }
+      .config-nav-item:hover {
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--text);
+      }
+      .config-nav-item.active {
+        background: rgba(124, 111, 255, 0.12);
+        color: var(--accent);
+      }
+      .config-body {
+        flex: 1;
+      }
+      .fields-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      .field-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 14px 16px;
+        transition: border-color 0.15s;
+      }
+      .field-card.modified {
+        border-color: var(--yellow);
+      }
+      .field-label {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--subtle);
+        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--yellow);
+      }
+      .field-input {
+        width: 100%;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 5px;
+        padding: 7px 10px;
+        color: var(--text);
+        font-family: var(--mono);
+        font-size: 12px;
+      }
+      .field-input:focus {
+        outline: none;
+        border-color: var(--accent);
+      }
+      textarea.field-input {
+        min-height: 80px;
+        resize: vertical;
+      }
+      .toggle-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .toggle {
+        position: relative;
+        display: inline-block;
+        width: 38px;
+        height: 22px;
+      }
+      .toggle input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+      }
+      .slider {
+        position: absolute;
+        inset: 0;
+        background: var(--border);
+        border-radius: 22px;
+        cursor: pointer;
+        transition: 0.2s;
+      }
+      .slider:before {
+        content: "";
+        position: absolute;
+        height: 16px;
+        width: 16px;
+        left: 3px;
+        bottom: 3px;
+        background: var(--text);
+        border-radius: 50%;
+        transition: 0.2s;
+      }
+      input:checked + .slider {
+        background: var(--accent);
+      }
+      input:checked + .slider:before {
+        transform: translateX(16px);
+      }
+      .number-input {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .num-btn {
+        background: var(--border);
+        border: none;
+        color: var(--text);
+        width: 26px;
+        height: 26px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 16px;
+        line-height: 1;
+      }
+
+      /* ─── Toast ────────────────────────────────────────────────────────── */
+      #toast {
+        position: fixed;
+        bottom: 24px;
+        right: 24px;
+        background: var(--green);
+        color: #fff;
+        padding: 10px 20px;
+        border-radius: 8px;
+        font-size: 13px;
+        font-family: var(--mono);
+        opacity: 0;
+        transform: translateY(10px);
+        transition: 0.3s;
+        z-index: 99;
+      }
+      #toast.show {
+        opacity: 1;
+        transform: none;
+      }
+
+      /* ─── Chat detail ──────────────────────────────────────────────────── */
+      .breadcrumb {
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--muted);
+        cursor: pointer;
+        padding: 0;
+        background: none;
+        border: none;
+      }
+      .breadcrumb:hover {
+        color: var(--text);
+      }
+      .msg-bubble {
+        margin-bottom: 8px;
+        padding: 10px 14px;
+        border-radius: 8px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        font-family: var(--mono);
+        font-size: 12px;
+        max-width: 80%;
+      }
+      .msg-bubble.outgoing {
+        background: rgba(124, 111, 255, 0.1);
+        border-color: rgba(124, 111, 255, 0.3);
+        margin-left: auto;
+      }
+      .msg-meta {
+        font-size: 10px;
+        color: var(--muted);
+        margin-bottom: 4px;
+      }
+      .msg-body {
+        color: var(--text);
+        word-break: break-word;
+        white-space: pre-wrap;
+      }
+      .msg-list {
+        display: flex;
+        flex-direction: column;
+      }
+
+      .hidden {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- ─── Sidebar ──────────────────────────────────────────────────────────── -->
+    <aside>
+      <div class="sidebar-logo">AUROIC<span>control panel</span></div>
+      <div class="conn-badge">
+        <div class="conn-dot" id="connDot"></div>
+        <span id="connStatus">Connecting…</span>
+      </div>
+      <nav id="nav">
+        <div class="nav-item active" data-view="overview">
+          <span class="icon">⬛</span>Overview
+        </div>
+        <div class="nav-item" data-view="chats">
+          <span class="icon">💬</span>Chats
+          <span class="nav-badge" id="badge-chats">0</span>
+        </div>
+        <div class="nav-item" data-view="messages">
+          <span class="icon">✉️</span>Messages
+          <span class="nav-badge" id="badge-messages">0</span>
+        </div>
+        <div class="nav-item" data-view="users">
+          <span class="icon">👤</span>Users
+          <span class="nav-badge" id="badge-users">0</span>
+        </div>
+        <div class="nav-item" data-view="media">
+          <span class="icon">🖼</span>Media
+          <span class="nav-badge" id="badge-media">0</span>
+        </div>
+        <div class="nav-item" data-view="reactions">
+          <span class="icon">❤️</span>Reactions
+          <span class="nav-badge" id="badge-reactions">0</span>
+        </div>
+        <div class="nav-item" data-view="outgoing">
+          <span class="icon">📤</span>Outgoing
+          <span class="nav-badge" id="badge-outgoing">0</span>
+        </div>
+        <div class="nav-item" data-view="router">
+          <span class="icon">🔀</span>Router
+        </div>
+        <div class="nav-item" data-view="config">
+          <span class="icon">⚙️</span>Config
+        </div>
+      </nav>
+      <div class="sidebar-footer" id="sidebarTime"></div>
+    </aside>
+
+    <!-- ─── Main ─────────────────────────────────────────────────────────────── -->
+    <main>
+      <div class="topbar">
+        <h1 id="viewTitle">Overview</h1>
+        <input
+          type="text"
+          id="searchInput"
+          placeholder="Search…"
+          oninput="handleSearch(this.value)"
+        />
+        <button class="btn secondary" onclick="refreshAll()">↻ Refresh</button>
+      </div>
+      <div class="content" id="content"></div>
+    </main>
+
+    <div id="toast"></div>
+
+    <script>
+      // ─── State ────────────────────────────────────────────────────────────────────
+      const state = {
+        view: "overview",
+        chats: [],
+        messages: [],
+        users: [],
+        media: [],
+        reactions: [],
+        outgoing: [],
+        config: null,
+        configDirty: false,
+        routerFeed: [], // live router decisions / events
+        chatDetailId: null,
+        chatMessages: [],
+        search: "",
+        counts: {
+          chats: 0,
+          messages: 0,
+          users: 0,
+          media: 0,
+          reactions: 0,
+          outgoing: 0,
+        },
+        newBadges: { messages: false },
+      };
+
+      // ─── Routing ──────────────────────────────────────────────────────────────────
+      function setView(v) {
+        state.view = v;
+        state.chatDetailId = null;
+        state.search = "";
+        document.getElementById("searchInput").value = "";
+        document.querySelectorAll(".nav-item").forEach((el) => {
+          el.classList.toggle("active", el.dataset.view === v);
+        });
+        const titles = {
+          overview: "Overview",
+          chats: "Chats",
+          messages: "Messages",
+          users: "Users",
+          media: "Media",
+          reactions: "Reactions",
+          outgoing: "Outgoing",
+          router: "Router Feed",
+          config: "Runtime Config",
+        };
+        document.getElementById("viewTitle").textContent = titles[v] || v;
+        renderView();
+      }
+
+      document.getElementById("nav").addEventListener("click", (e) => {
+        const item = e.target.closest(".nav-item");
+        if (item?.dataset.view) {
+          const v = item.dataset.view;
+          if (v === state.view) return;
+          // clear new badge for this view
+          const badge = document.getElementById("badge-" + v);
+          if (badge) badge.classList.remove("new");
+          setView(v);
+        }
+      });
+
+      // ─── Data fetching ────────────────────────────────────────────────────────────
+      async function fetchJSON(url) {
+        try {
+          const r = await fetch(url);
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return await r.json();
+        } catch (e) {
+          console.warn("Fetch failed:", url, e.message);
+          return null;
+        }
+      }
+
+      async function refreshAll() {
+        const [chats, messages, users, media, reactions, outgoing] =
+          await Promise.all([
+            fetchJSON("/api/chats"),
+            fetchJSON("/api/messages?limit=200"),
+            fetchJSON("/api/users"),
+            fetchJSON("/api/media?limit=100"),
+            fetchJSON("/api/reactions?limit=200"),
+            fetchJSON("/api/outgoing?limit=200"),
+          ]);
+        if (chats) state.chats = chats;
+        if (messages) state.messages = messages;
+        if (users) state.users = users;
+        if (media) state.media = media;
+        if (reactions) state.reactions = reactions;
+        if (outgoing) state.outgoing = outgoing;
+
+        state.counts = {
+          chats: state.chats.length,
+          messages: state.messages.length,
+          users: state.users.length,
+          media: state.media.length,
+          reactions: state.reactions.length,
+          outgoing: state.outgoing.length,
+        };
+        updateBadges();
+        renderView();
+      }
+
+      async function loadConfig() {
+        const cfg = await fetchJSON("/config");
+        if (cfg) {
+          state.config = cfg;
+          state.configDirty = false;
+        }
+      }
+
+      function updateBadges() {
+        [
+          "chats",
+          "messages",
+          "users",
+          "media",
+          "reactions",
+          "outgoing",
+        ].forEach((k) => {
+          const el = document.getElementById("badge-" + k);
+          if (el) el.textContent = state.counts[k];
+        });
+      }
+
+      // ─── SSE ──────────────────────────────────────────────────────────────────────
+      function connectSSE() {
+        const es = new EventSource("/events");
+        const dot = document.getElementById("connDot");
+        const st = document.getElementById("connStatus");
+
+        es.onopen = () => {
+          dot.classList.add("live");
+          st.textContent = "Live";
+        };
+        es.onerror = () => {
+          dot.classList.remove("live");
+          st.textContent = "Reconnecting…";
+        };
+
+        es.onmessage = (e) => {
+          const ev = JSON.parse(e.data);
+          handleSSEEvent(ev);
+        };
+      }
+
+      function handleSSEEvent(ev) {
+        const now = new Date().toLocaleTimeString();
+
+        switch (ev.type) {
+          case "NEW_MESSAGE":
+            refreshAll();
+            if (state.view !== "messages") {
+              const b = document.getElementById("badge-messages");
+              if (b) b.classList.add("new");
+            }
+            appendFeed({
+              text: `NEW_MESSAGE  chat:${shortId(ev.chatId)}  mid:${shortId(ev.mid)}`,
+              time: now,
+            });
+            break;
+
+          case "EDIT":
+            refreshAll();
+            appendFeed({
+              text: `EDIT  chat:${shortId(ev.chatId)}  mid:${shortId(ev.mid)}`,
+              time: now,
+            });
+            break;
+
+          case "DELETE":
+            refreshAll();
+            appendFeed({
+              text: `DELETE  chat:${shortId(ev.chatId)}  mid:${shortId(ev.mid)}`,
+              time: now,
+            });
+            break;
+
+          case "REACTION_ADD":
+            refreshAll();
+            appendFeed({
+              text: `REACTION+  chat:${shortId(ev.chatId)}  ${ev.reaction}`,
+              time: now,
+            });
+            break;
+
+          case "REACTION_REMOVE":
+            refreshAll();
+            appendFeed({
+              text: `REACTION-  chat:${shortId(ev.chatId)}`,
+              time: now,
+            });
+            break;
+
+          case "ROUTER_DECISION":
+            appendFeed({
+              text: `ROUTER  chat:${shortId(ev.chatId)}  type:${ev.decision.type}  effort:${ev.decision.effort}  title:${ev.decision.title}`,
+              time: now,
+            });
+            if (state.view === "router") renderView();
+            break;
+
+          case "OUTGOING":
+            refreshAll();
+            appendFeed({
+              text: `OUTGOING  chat:${shortId(ev.chatId)}  ${ev.actionType}`,
+              time: now,
+            });
+            break;
+
+          case "CONFIG_CHANGED":
+            loadConfig().then(() => {
+              if (state.view === "config") renderView();
+            });
+            showToast("Config reloaded from file");
+            break;
+        }
+      }
+
+      function appendFeed(item) {
+        state.routerFeed.unshift(item);
+        if (state.routerFeed.length > 200) state.routerFeed.pop();
+        if (state.view === "router") renderView();
+      }
+
+      function shortId(id) {
+        return id ? String(id).slice(-8) : "?";
+      }
+
+      // ─── Rendering ────────────────────────────────────────────────────────────────
+      function renderView() {
+        const el = document.getElementById("content");
+        switch (state.view) {
+          case "overview":
+            el.innerHTML = renderOverview();
+            break;
+          case "chats":
+            el.innerHTML = state.chatDetailId
+              ? renderChatDetail()
+              : renderChats();
+            break;
+          case "messages":
+            el.innerHTML = renderMessages();
+            break;
+          case "users":
+            el.innerHTML = renderUsers();
+            break;
+          case "media":
+            el.innerHTML = renderMedia();
+            break;
+          case "reactions":
+            el.innerHTML = renderReactions();
+            break;
+          case "outgoing":
+            el.innerHTML = renderOutgoing();
+            break;
+          case "router":
+            el.innerHTML = renderRouter();
+            break;
+          case "config":
+            renderConfigView(el);
+            return;
+          default:
+            el.innerHTML = '<div class="empty">Select a view</div>';
+        }
+        // Attach delegates
+        el.querySelectorAll("[data-chat-click]").forEach((r) =>
+          r.addEventListener("click", () =>
+            openChatDetail(r.dataset.chatClick),
+          ),
+        );
+      }
+
+      function renderOverview() {
+        const c = state.counts;
+        return `
+    <div class="stats-grid">
+      <div class="stat-card"><div class="val">${c.chats}</div><div class="lbl">Chats</div></div>
+      <div class="stat-card"><div class="val">${c.messages}</div><div class="lbl">Messages</div></div>
+      <div class="stat-card"><div class="val">${c.users}</div><div class="lbl">Users</div></div>
+      <div class="stat-card"><div class="val">${c.media}</div><div class="lbl">Media items</div></div>
+      <div class="stat-card"><div class="val">${c.reactions}</div><div class="lbl">Reactions</div></div>
+      <div class="stat-card"><div class="val">${c.outgoing}</div><div class="lbl">Outgoing actions</div></div>
+    </div>
+    <div class="card">
+      <div class="card-header">Recent Events (live)</div>
+      <div style="padding:14px">
+        ${
+          state.routerFeed.length === 0
+            ? '<div class="empty" style="padding:20px">No events yet — events appear here in real time</div>'
+            : state.routerFeed
+                .slice(0, 20)
+                .map(
+                  (f) =>
+                    `<div class="feed-item"><span class="feed-time">${esc(f.time)}</span>${esc(f.text)}</div>`,
+                )
+                .join("")
+        }
+      </div>
+    </div>`;
+      }
+
+      function renderChats() {
+        const rows = state.chats.filter(
+          (c) =>
+            !state.search ||
+            c.title?.toLowerCase().includes(state.search) ||
+            c.chatId.includes(state.search),
+        );
+        if (!rows.length) return `<div class="empty">No chats found</div>`;
+        return `<div class="card"><table>
+    <thead><tr><th>Chat ID</th><th>Title</th><th>Group</th><th>Muted</th><th>Last Processed MID</th></tr></thead>
+    <tbody>${rows
+      .map(
+        (c) => `
+      <tr data-chat-click="${esc(c.chatId)}" style="cursor:pointer">
+        <td>${esc(c.chatId)}</td>
+        <td>${esc(c.title || "—")}</td>
+        <td>${c.isGroup ? "✓" : "—"}</td>
+        <td>${c.isMuted ? "✓" : "—"}</td>
+        <td>${esc(c.lastProcessedMid || "—")}</td>
+      </tr>`,
+      )
+      .join("")}
+    </tbody>
+  </table></div>`;
+      }
+
+      function openChatDetail(chatId) {
+        state.chatDetailId = chatId;
+        document.getElementById("viewTitle").textContent = "Chat · " + chatId;
+        fetchJSON(`/api/chats/${chatId}/messages?limit=200`).then((msgs) => {
+          state.chatMessages = msgs || [];
+          renderView();
+        });
+      }
+
+      function renderChatDetail() {
+        const msgs = state.chatMessages;
+        return `
+    <button class="breadcrumb" onclick="state.chatDetailId=null; setView('chats')">← Back to chats</button>
+    <br/><br/>
+    <div class="msg-list">
+      ${
+        msgs.length === 0
+          ? '<div class="empty">No messages</div>'
+          : msgs
+              .slice()
+              .reverse()
+              .map(
+                (m) => `
+        <div class="msg-bubble${m.senderFbid === "__bot__" ? " outgoing" : ""}">
+          <div class="msg-meta">${esc(m.senderFbid)} · ${new Date(m.timestampMs).toLocaleString()} · ${esc(m.contentType || "?")}${m.edited ? " [edited]" : ""}${m.deleted ? " [deleted]" : ""}</div>
+          <div class="msg-body">${esc(m.textBody || "[no text]")}</div>
+        </div>`,
+              )
+              .join("")
+      }
+    </div>`;
+      }
+
+      function renderMessages() {
+        const rows = state.messages.filter(
+          (m) =>
+            !state.search ||
+            m.textBody?.toLowerCase().includes(state.search) ||
+            m.senderFbid.includes(state.search) ||
+            m.chatId.includes(state.search),
+        );
+        if (!rows.length) return '<div class="empty">No messages found</div>';
+        return `<div class="card"><table>
+    <thead><tr><th>MID</th><th>Chat</th><th>Sender</th><th>Type</th><th>Text</th><th>Time</th><th>E/D</th></tr></thead>
+    <tbody>${rows
+      .map(
+        (m) => `
+      <tr>
+        <td title="${esc(m.mid)}">${esc(m.mid.slice(-12))}</td>
+        <td>${esc(m.chatId)}</td>
+        <td>${esc(m.senderFbid)}</td>
+        <td><span class="tag text">${esc(m.contentType || "?")}</span></td>
+        <td title="${esc(m.textBody || "")}">${esc((m.textBody || "").slice(0, 60))}</td>
+        <td>${new Date(m.timestampMs).toLocaleString()}</td>
+        <td>${m.edited ? "E" : ""}${m.deleted ? "D" : ""}</td>
+      </tr>`,
+      )
+      .join("")}
+    </tbody>
+  </table></div>`;
+      }
+
+      function renderUsers() {
+        const rows = state.users.filter(
+          (u) =>
+            !state.search ||
+            u.username?.toLowerCase().includes(state.search) ||
+            u.fullName?.toLowerCase().includes(state.search) ||
+            u.senderFbid.includes(state.search),
+        );
+        if (!rows.length) return '<div class="empty">No users found</div>';
+        return `<div class="card"><table>
+    <thead><tr><th>FBID</th><th>Username</th><th>Full Name</th><th>Verified</th><th>Since</th></tr></thead>
+    <tbody>${rows
+      .map(
+        (u) => `
+      <tr>
+        <td>${esc(u.senderFbid)}</td>
+        <td>${esc(u.username || "—")}</td>
+        <td>${esc(u.fullName || "—")}</td>
+        <td>${u.isVerified ? "✓" : "—"}</td>
+        <td>${u.createdAt ? new Date(u.createdAt).toLocaleDateString() : "—"}</td>
+      </tr>`,
+      )
+      .join("")}
+    </tbody>
+  </table></div>`;
+      }
+
+      function renderMedia() {
+        const rows = state.media.filter(
+          (m) =>
+            !state.search ||
+            m.mediaType?.toLowerCase().includes(state.search) ||
+            m.messageMid.includes(state.search),
+        );
+        if (!rows.length) return '<div class="empty">No media found</div>';
+        return `<div class="card"><table>
+    <thead><tr><th>Message MID</th><th>Type</th><th>URL</th><th>Dimensions</th><th>Duration</th></tr></thead>
+    <tbody>${rows
+      .map(
+        (m) => `
+      <tr>
+        <td>${esc(m.messageMid.slice(-12))}</td>
+        <td><span class="tag media">${esc(m.mediaType || "?")}</span></td>
+        <td title="${esc(m.url || "")}"><a href="${esc(m.url || "")}" target="_blank" style="color:var(--accent)">${esc((m.url || "").slice(0, 40))}</a></td>
+        <td>${m.width && m.height ? m.width + "×" + m.height : "—"}</td>
+        <td>${m.durationMs ? m.durationMs + "ms" : "—"}</td>
+      </tr>`,
+      )
+      .join("")}
+    </tbody>
+  </table></div>`;
+      }
+
+      function renderReactions() {
+        const rows = state.reactions.filter(
+          (r) =>
+            !state.search ||
+            r.reaction.toLowerCase().includes(state.search) ||
+            r.senderFbid.includes(state.search),
+        );
+        if (!rows.length) return '<div class="empty">No reactions found</div>';
+        return `<div class="card"><table>
+    <thead><tr><th>Message MID</th><th>Sender</th><th>Reaction</th><th>Time</th></tr></thead>
+    <tbody>${rows
+      .map(
+        (r) => `
+      <tr>
+        <td>${esc(r.messageMid.slice(-12))}</td>
+        <td>${esc(r.senderFbid)}</td>
+        <td>${esc(r.reaction)}</td>
+        <td>${r.timestampMs ? new Date(r.timestampMs).toLocaleString() : "—"}</td>
+      </tr>`,
+      )
+      .join("")}
+    </tbody>
+  </table></div>`;
+      }
+
+      function renderOutgoing() {
+        const rows = state.outgoing.filter(
+          (o) =>
+            !state.search ||
+            o.type.toLowerCase().includes(state.search) ||
+            o.chatId.includes(state.search) ||
+            o.title?.toLowerCase().includes(state.search),
+        );
+        if (!rows.length)
+          return '<div class="empty">No outgoing entries found</div>';
+        return `<div class="card"><table>
+    <thead><tr><th>ID</th><th>Chat</th><th>Type</th><th>Effort</th><th>Title</th><th>Content</th><th>Time</th></tr></thead>
+    <tbody>${rows
+      .map(
+        (o) => `
+      <tr>
+        <td>${o.id}</td>
+        <td>${esc(o.chatId)}</td>
+        <td><span class="tag ${esc(o.type)}">${esc(o.type)}</span></td>
+        <td>${esc(o.effort || "—")}</td>
+        <td title="${esc(o.title || "")}">${esc((o.title || "—").slice(0, 30))}</td>
+        <td title="${esc(o.content || "")}">${esc((o.content || "—").slice(0, 60))}</td>
+        <td>${o.createdAt ? new Date(o.createdAt).toLocaleString() : "—"}</td>
+      </tr>`,
+      )
+      .join("")}
+    </tbody>
+  </table></div>`;
+      }
+
+      function renderRouter() {
+        if (!state.routerFeed.length)
+          return '<div class="empty">No router events yet — events appear here live via SSE</div>';
+        return `<div class="live-feed">${state.routerFeed
+          .map(
+            (f) =>
+              `<div class="feed-item"><span class="feed-time">${esc(f.time)}</span><span class="feed-type">›</span>${esc(f.text)}</div>`,
+          )
+          .join("")}</div>`;
+      }
+
+      // ─── Config editor ────────────────────────────────────────────────────────────
+      let configLocal = null;
+      let configSection = null;
+
+      function renderConfigView(el) {
+        if (!state.config) {
+          el.innerHTML = '<div class="empty">Loading config…</div>';
+          loadConfig().then(() => renderView());
+          return;
+        }
+        configLocal = JSON.parse(JSON.stringify(state.config));
+        const sections = Object.keys(configLocal);
+        if (!configSection || !sections.includes(configSection))
+          configSection = sections[0];
+
+        el.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <div style="font-size:13px;color:var(--subtle)">Edit <code style="color:var(--accent)">runtime.json</code> — changes save instantly on write</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn secondary" onclick="loadConfig().then(()=>renderView())">↻ Reload</button>
+        <button class="btn" onclick="saveConfig()">Save</button>
+      </div>
+    </div>
+    <div class="config-editor">
+      <div class="config-nav">
+        ${sections
+          .map(
+            (s) => `
+          <div class="config-nav-item${s === configSection ? " active" : ""}" onclick="configSection='${s}';renderView()">
+            ${s}
+          </div>`,
+          )
+          .join("")}
+      </div>
+      <div class="config-body">
+        <div class="fields-grid">
+          ${renderConfigSection(configLocal[configSection], configSection)}
+        </div>
+      </div>
+    </div>`;
+      }
+
+      function renderConfigSection(obj, prefix) {
+        if (typeof obj !== "object" || obj === null) return "";
+        return Object.entries(obj)
+          .map(([key, val]) => {
+            const path = prefix + "." + key;
+            const label = key;
+            if (typeof val === "boolean") {
+              return `<div class="field-card">
+        <div class="field-label">${esc(label)}</div>
+        <div class="toggle-row">
+          <span style="font-family:var(--mono);font-size:12px;color:var(--subtle)">${val}</span>
+          <label class="toggle">
+            <input type="checkbox" ${val ? "checked" : ""} onchange="updateConfig('${esc(path)}', this.checked)">
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>`;
+            }
+            if (typeof val === "number") {
+              return `<div class="field-card">
+        <div class="field-label">${esc(label)}</div>
+        <div class="number-input">
+          <button class="num-btn" onclick="updateConfig('${esc(path)}', Number(this.nextElementSibling.value)-1)">−</button>
+          <input class="field-input" type="number" value="${val}" style="width:80px;text-align:center"
+            onchange="updateConfig('${esc(path)}', Number(this.value))">
+          <button class="num-btn" onclick="updateConfig('${esc(path)}', Number(this.previousElementSibling.value)+1)">+</button>
+        </div>
+      </div>`;
+            }
+            if (typeof val === "string" && val.length > 60) {
+              return `<div class="field-card" style="grid-column:span 2">
+        <div class="field-label">${esc(label)}</div>
+        <textarea class="field-input" rows="4"
+          onchange="updateConfig('${esc(path)}', this.value)"
+          oninput="updateConfig('${esc(path)}', this.value)">${esc(val)}</textarea>
+      </div>`;
+            }
+            if (Array.isArray(val)) {
+              return `<div class="field-card">
+        <div class="field-label">${esc(label)} <span style="color:var(--muted)">(comma-sep)</span></div>
+        <input class="field-input" type="text" value="${esc(val.join(", "))}"
+          onchange="updateConfig('${esc(path)}', this.value.split(',').map(s=>s.trim()).filter(Boolean))">
+      </div>`;
+            }
+            if (typeof val === "object" && val !== null) {
+              return renderConfigSection(val, path);
+            }
+            return `<div class="field-card">
+      <div class="field-label">${esc(label)}</div>
+      <input class="field-input" type="text" value="${esc(String(val ?? ""))}"
+        onchange="updateConfig('${esc(path)}', this.value)">
+    </div>`;
+          })
+          .join("");
+      }
+
+      function updateConfig(path, value) {
+        const parts = path.split(".");
+        let cur = configLocal;
+        for (let i = 0; i < parts.length - 1; i++) {
+          cur = cur[parts[i]];
+          if (!cur) return;
+        }
+        cur[parts[parts.length - 1]] = value;
+        state.configDirty = true;
+      }
+
+      async function saveConfig() {
+        try {
+          const r = await fetch("/config", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(configLocal, null, 2),
+          });
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          state.config = JSON.parse(JSON.stringify(configLocal));
+          state.configDirty = false;
+          showToast("Config saved");
+        } catch (e) {
+          showToast("Save failed: " + e.message);
+        }
+      }
+
+      // ─── Search ───────────────────────────────────────────────────────────────────
+      function handleSearch(q) {
+        state.search = q.toLowerCase();
+        renderView();
+      }
+
+      // ─── Utilities ────────────────────────────────────────────────────────────────
+      function esc(str) {
+        return String(str ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      }
+
+      function showToast(msg) {
+        const t = document.getElementById("toast");
+        t.textContent = msg;
+        t.classList.add("show");
+        setTimeout(() => t.classList.remove("show"), 2500);
+      }
+
+      // ─── Clock ────────────────────────────────────────────────────────────────────
+      function updateClock() {
+        const el = document.getElementById("sidebarTime");
+        if (el) el.textContent = new Date().toLocaleTimeString();
+      }
+      setInterval(updateClock, 1000);
+      updateClock();
+
+      // ─── Init ─────────────────────────────────────────────────────────────────────
+      (async function init() {
+        connectSSE();
+        await Promise.all([refreshAll(), loadConfig()]);
+        renderView();
+      })();
+    </script>
+  </body>
+</html>

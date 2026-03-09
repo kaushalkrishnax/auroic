@@ -1,0 +1,81 @@
+{
+  "message": {
+    "message_id": "string",
+    "thread_fbid": "string",
+    "sender_fbid": "string",
+    "timestamp_ms": "string",
+    "offline_threading_id": "string",
+
+    "content_type": "TEXT | IMAGES | VIDEOS | AUDIOS | INSTAGRAM_MESSAGING_ANIMATED_IMAGE | CUTOUT_STICKER_XMA | MESSAGE_INLINE_SHARE",
+
+    "text_body": "string|null",
+
+    "content": {
+      "__typename": "string",
+
+      "text_body": "string|null",
+
+      "attachments": [
+        {
+          "attachment_fbid": "string",
+          "attachment_type": "number",
+          "preview_cdn_url": "string",
+          "attachment_cdn_url": "string",
+          "preview_height": "number",
+          "preview_width": "number"
+        }
+      ],
+
+      "videos": [
+        {
+          "attachment_fbid": "string",
+          "attachment_type": "number",
+          "preview_cdn_url": "string",
+          "attachment_cdn_url": "string",
+          "preview_height": "number",
+          "preview_width": "number"
+        }
+      ],
+
+      "audio_attachments": [
+        {
+          "attachment_fbid": "string",
+          "attachment_cdn_url": "string",
+          "playable_duration_ms": "number",
+          "waveform_data": ["number"]
+        }
+      ],
+
+      "animated_media": [
+        {
+          "is_sticker": "boolean",
+          "alt_text": "string",
+          "attachment_webp_url": "string",
+          "attachment_mp4_url": "string",
+          "preview_cdn_url": "string",
+          "preview_height": "number",
+          "preview_width": "number"
+        }
+      ],
+
+      "preview_url": "string",
+      "preview_height": "number",
+      "preview_width": "number"
+    },
+
+    "reactions": [],
+    "replied_to_message_id": "string|null",
+
+    "sender": {
+      "id": "string",
+      "name": "string",
+      "igid": "string",
+
+      "user_dict": {
+        "username": "string",
+        "full_name": "string",
+        "profile_pic_url": "string"
+      }
+    }
+  }
+}

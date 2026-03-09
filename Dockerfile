@@ -12,6 +12,7 @@ RUN npx playwright install-deps chromium-headless-shell
 
 COPY tsconfig.json ./
 COPY src ./src
+COPY drizzle ./drizzle
 RUN npm run build && npm prune --omit=dev
 
 RUN mkdir -p /app/data \

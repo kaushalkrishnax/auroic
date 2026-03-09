@@ -1,0 +1,40 @@
+{
+  "events": {
+    "SlideUQPPNewMessage": {
+      "uq_seq_id": "string",
+      "thread_fbid": "string",
+      "message": "INSTAGRAM_MESSAGE_SCHEMA.message"
+    },
+
+    "SlideUQPPDeleteMessage": {
+      "uq_seq_id": "string",
+      "thread_fbid": "string",
+      "message_id": "string"
+    },
+
+    "SlideUQPPEditMessage": {
+      "uq_seq_id": "string",
+      "thread_fbid": "string",
+      "message_id": "string",
+      "text_body": "string",
+      "slide_edit_history_entry": {
+        "timestamp_ms": "string"
+      }
+    },
+
+    "SlideUQPPCreateReaction": {
+      "uq_seq_id": "string",
+      "thread_fbid": "string",
+      "message_id": "string",
+
+      "reaction": {
+        "log_message_id": "string",
+        "reaction": "string",
+        "reaction_timestamp_ms": "string",
+        "sender_fbid": "string"
+      },
+
+      "reacted_to_message_sender_fbid": "string"
+    }
+  }
+}

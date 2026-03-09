@@ -1,0 +1,9 @@
+{
+  "TEXT": "normal text message",
+  "IMAGES": "photo attachment",
+  "VIDEOS": "video attachment",
+  "AUDIOS": "voice message",
+  "INSTAGRAM_MESSAGING_ANIMATED_IMAGE": "gif or animated sticker",
+  "CUTOUT_STICKER_XMA": "cutout sticker",
+  "MESSAGE_INLINE_SHARE": "avatar sticker"
+}
