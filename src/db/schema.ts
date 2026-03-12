@@ -15,41 +15,100 @@ import { sql, InferSelectModel, InferInsertModel } from "drizzle-orm";
 // users
 
 export const users = sqliteTable("users", {
-  senderFbid: text("sender_fbid").primaryKey(),
+  userId: text("user_id").primaryKey(),
+  platformUserId: text("platform_user_id"),
   username: text("username"),
-  fullName: text("full_name"),
-  profilePicUrl: text("profile_pic_url"),
+  displayName: text("display_name"),
+  avatarUrl: text("avatar_url"),
   isVerified: integer("is_verified", { mode: "boolean" }).default(false),
+  platform: text("platform"),
   createdAt: text("created_at").default(sql`(datetime('now'))`),
 });
 
-// chats
+// user_behavior
 
-export const chats = sqliteTable("chats", {
-  chatId: text("chat_id").primaryKey(),
+export const userBehavior = sqliteTable(
+  "user_behavior",
+  {
+    conversationId: text("conversation_id"),
+    userId: text("user_id"),
+    messageFrequency: integer("message_frequency"),
+    averageLength: integer("average_length"),
+    emojiUsage: integer("emoji_usage"),
+    aggressionScore: integer("aggression_score"),
+    helpfulnessScore: integer("helpfulness_score"),
+    lastUpdatedAt: text("last_updated_at"),
+  },
+  (table) => [primaryKey({ columns: [table.conversationId, table.userId] })],
+);
+
+// user_memories
+
+export const userMemories = sqliteTable("user_memories", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  conversationId: text("conversation_id"),
+  userId: text("user_id"),
+  memoryType: text("memory_type"), // personality | interest | fact | relation
+  summary: text("summary"),
+  confidence: integer("confidence"),
+  lastReferencedAt: text("last_referenced_at"),
+  createdAt: text("created_at").default(sql`(datetime('now'))`),
+});
+
+// memory_vectors
+
+export const memoryVectors = sqliteTable("memory_vectors", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  conversationId: text("conversation_id"),
+  userId: text("user_id"),
+  sourceMessageId: text("source_message_id"),
+  text: text("text"),
+  embedding: text("embedding"), // stored vector
+  embeddingModel: text("embedding_model"), // bge-small | nomic-embed | e5-small
+  decayScore: integer("decay_score").default(100),
+  lastAccessedAt: text("last_accessed_at"),
+  createdAt: text("created_at").default(sql`(datetime('now'))`),
+});
+
+// conversations
+
+export const conversations = sqliteTable("conversations", {
+  conversationId: text("conversation_id").primaryKey(),
+  platform: text("platform").notNull(),
   title: text("title"),
-  imageUrl: text("image_url"),
-  groupCreatorId: text("group_creator_id"),
+  avatarUrl: text("avatar_url"),
+  createdByUserId: text("created_by_user_id"),
   isGroup: integer("is_group", { mode: "boolean" }).default(false),
   isMuted: integer("is_muted", { mode: "boolean" }).default(false),
-  lastProcessedMid: text("last_processed_mid"),
+  lastProcessedMessageId: text("last_processed_message_id"),
   createdAt: text("created_at").default(sql`(datetime('now'))`),
 });
 
-// chat_participants
+// conversation_participants
 
-export const chatParticipants = sqliteTable(
-  "chat_participants",
+export const conversationParticipants = sqliteTable(
+  "conversation_participants",
   {
-    chatId: text("chat_id")
+    conversationId: text("conversation_id")
       .notNull()
-      .references(() => chats.chatId),
-    senderFbid: text("sender_fbid")
+      .references(() => conversations.conversationId),
+    userId: text("user_id")
       .notNull()
-      .references(() => users.senderFbid),
+      .references(() => users.userId),
   },
-  (table) => [primaryKey({ columns: [table.chatId, table.senderFbid] })],
+  (table) => [primaryKey({ columns: [table.conversationId, table.userId] })],
 );
+
+// conversation_metrics
+
+export const conversationMetrics = sqliteTable("conversation_metrics", {
+  conversationId: text("conversation_id").primaryKey(),
+  messageRate: integer("message_rate"),
+  activeUserCount: integer("active_user_count"),
+  averageMessageLength: integer("average_message_length"),
+  energyLevel: text("energy_level"),
+  lastUpdatedAt: text("last_updated_at"),
+});
 
 // messages
 
@@ -57,24 +116,29 @@ export const messages = sqliteTable(
   "messages",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    mid: text("mid").unique().notNull(),
-    chatId: text("chat_id")
+    messageId: text("message_id").unique().notNull(),
+    conversationId: text("conversation_id")
       .notNull()
-      .references(() => chats.chatId),
-    senderFbid: text("sender_fbid").notNull(),
+      .references(() => conversations.conversationId),
+    userId: text("user_id").notNull(),
     timestampMs: integer("timestamp_ms").notNull(),
-    contentType: text("content_type"),
-    textBody: text("text_body"),
-    repliedToMid: text("replied_to_mid"),
-    edited: integer("edited", { mode: "boolean" }).default(false),
-    deleted: integer("deleted", { mode: "boolean" }).default(false),
+    messageType: text("message_type"), // text | media | system
+    textContent: text("text_content"),
+    replyToMessageId: text("reply_to_message_id"),
+    isEdited: integer("is_edited", { mode: "boolean" }).default(false),
+    isDeleted: integer("is_deleted", { mode: "boolean" }).default(false),
+    rawPayload: text("raw_payload"),
     processedAt: text("processed_at"),
     processingLockAt: text("processing_lock_at"),
     createdAt: text("created_at").default(sql`(datetime('now'))`),
   },
   (table) => [
-    index("idx_messages_chat_time").on(table.chatId, table.timestampMs),
-    index("idx_messages_sender").on(table.senderFbid),
+    index("idx_messages_conversation_time").on(
+      table.conversationId,
+      table.timestampMs,
+    ),
+    index("idx_messages_user").on(table.userId),
+    index("idx_messages_reply").on(table.replyToMessageId),
   ],
 );
 
@@ -84,10 +148,10 @@ export const media = sqliteTable(
   "media",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    messageMid: text("message_mid")
+    messageId: text("message_id")
       .notNull()
-      .references(() => messages.mid),
-    mediaType: text("media_type"),
+      .references(() => messages.messageId),
+    attachmentType: text("attachment_type"),
     url: text("url"),
     previewUrl: text("preview_url"),
     width: integer("width"),
@@ -95,43 +159,73 @@ export const media = sqliteTable(
     durationMs: integer("duration_ms"),
     createdAt: text("created_at").default(sql`(datetime('now'))`),
   },
-  (table) => [index("idx_media_message").on(table.messageMid)],
+  (table) => [index("idx_media_message").on(table.messageId)],
 );
 
-// reactions
+// message_reactions
 
-export const reactions = sqliteTable("reactions", {
+export const messageReactions = sqliteTable("message_reactions", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  messageMid: text("message_mid")
+  messageId: text("message_id")
     .notNull()
-    .references(() => messages.mid),
-  senderFbid: text("sender_fbid").notNull(),
+    .references(() => messages.messageId),
+  userId: text("user_id").notNull(),
   reaction: text("reaction").notNull(),
   timestampMs: integer("timestamp_ms"),
-});
-
-// outgoing_messages
-
-export const outgoingMessages = sqliteTable("outgoing_messages", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  chatId: text("chat_id").notNull(),
-  targetMessageMid: text("target_message_mid"),
-  type: text("type").notNull(),
-  effort: text("effort"),
-  title: text("title"),
-  content: text("content"),
-  reason: text("reason"),
-  platformMid: text("platform_mid"),
   createdAt: text("created_at").default(sql`(datetime('now'))`),
 });
+
+// message_features
+
+export const messageFeatures = sqliteTable(
+  "message_features",
+  {
+    messageId: text("message_id")
+      .primaryKey()
+      .references(() => messages.messageId),
+    isQuestion: integer("is_question", { mode: "boolean" }).default(false),
+    sentimentScore: integer("sentiment_score"),
+    emotion: text("emotion"),
+    length: integer("length"),
+    emojiCount: integer("emoji_count"),
+    mentionCount: integer("mention_count"),
+    hasUrl: integer("has_url", { mode: "boolean" }),
+    language: text("language"),
+    topicHint: text("topic_hint"),
+    createdAt: text("created_at").default(sql`(datetime('now'))`),
+  },
+  (table) => [index("idx_features_question").on(table.isQuestion)],
+);
+
+// outgoing
+
+export const outgoing = sqliteTable(
+  "outgoing",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    routerDecisionId: integer("router_decision_id"),
+    conversationId: text("conversation_id").notNull(),
+    targetMessageId: text("target_message_id"),
+    targetUserId: text("target_user_id"),
+    actionType: text("action_type").notNull(), // text | react | media | ignore
+    effortLevel: text("effort_level"),
+    intentLabel: text("intent_label"),
+    messageContent: text("message_content"),
+    executionStatus: text("execution_status"), // pending | sent | failed
+    platformMessageId: text("platform_message_id"),
+    executionError: text("execution_error"),
+    createdAt: text("created_at").default(sql`(datetime('now'))`),
+  },
+  (table) => [index("idx_outgoing_conv").on(table.conversationId)],
+);
 
 // Inferred types
 
 export type SelectUser = InferSelectModel<typeof users>;
 export type InsertUser = InferInsertModel<typeof users>;
 
-export type SelectChat = InferSelectModel<typeof chats>;
-export type InsertChat = InferInsertModel<typeof chats>;
+export type SelectConversation = InferSelectModel<typeof conversations>;
+export type InsertConversation = InferInsertModel<typeof conversations>;
 
 export type SelectMessage = InferSelectModel<typeof messages>;
 export type InsertMessage = InferInsertModel<typeof messages>;
@@ -139,10 +233,21 @@ export type InsertMessage = InferInsertModel<typeof messages>;
 export type SelectMedia = InferSelectModel<typeof media>;
 export type InsertMedia = InferInsertModel<typeof media>;
 
-export type SelectReaction = InferSelectModel<typeof reactions>;
-export type InsertReaction = InferInsertModel<typeof reactions>;
+export type SelectMessageReaction = InferSelectModel<typeof messageReactions>;
+export type InsertMessageReaction = InferInsertModel<typeof messageReactions>;
 
-export type SelectOutgoing = InferSelectModel<typeof outgoingMessages>;
-export type InsertOutgoing = InferInsertModel<typeof outgoingMessages>;
+export type SelectOutgoing = InferSelectModel<typeof outgoing>;
+export type InsertOutgoing = InferInsertModel<typeof outgoing>;
 
-export type SelectChatParticipant = InferSelectModel<typeof chatParticipants>;
+export type SelectMessageFeatures = InferSelectModel<typeof messageFeatures>;
+export type InsertMessageFeatures = InferInsertModel<typeof messageFeatures>;
+
+export type SelectUserMemory = InferSelectModel<typeof userMemories>;
+export type InsertUserMemory = InferInsertModel<typeof userMemories>;
+
+export type SelectMemoryVector = InferSelectModel<typeof memoryVectors>;
+export type InsertMemoryVector = InferInsertModel<typeof memoryVectors>;
+
+export type SelectConversationParticipant = InferSelectModel<
+  typeof conversationParticipants
+>;

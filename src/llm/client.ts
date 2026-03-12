@@ -49,7 +49,9 @@ export async function chatCompletion(
     const data = (await res.json()) as {
       choices: [{ message: { content: string } }];
     };
-    return data.choices[0].message.content.trim();
+    return data.choices[0].message.content
+      .replace(/<think>[\s\S]*?<\/think>/gi, "")
+      .trim();
   } finally {
     clearTimeout(timer);
   }

@@ -6,8 +6,8 @@
  *   GET  /events                 — SSE stream (real-time events)
  *   GET  /config                 — read runtime.json
  *   POST /config                 — write runtime.json
- *   GET  /api/chats              — all chats
- *   GET  /api/chats/:id/messages — messages for a chat
+ *   GET  /api/conversations              — all conversations
+ *   GET  /api/conversations/:id/messages — messages for a chat
  *   GET  /api/messages           — all messages (recent)
  *   GET  /api/users              — all users
  *   GET  /api/media              — recent media
@@ -23,8 +23,8 @@ import path from "path";
 import { fileURLToPath } from "url";
 import logger from "@/utils/logger.js";
 import { eventBus } from "@/events.js";
-import { getRuntimePath } from "@/runtime/index.js";
-import { getAllChats } from "@/db/queries/chats.js";
+import { getRuntimePath, BOT_FBID } from "@/runtime/index.js";
+import { getAllConversations } from "@/db/queries/conversations.js";
 import { getAllMessages } from "@/db/queries/messages.js";
 import { getAllUsers } from "@/db/queries/users.js";
 import { getAllMedia } from "@/db/queries/media.js";
@@ -105,7 +105,13 @@ app.get("/events", (c) => {
 app.get("/config", async (c) => {
   try {
     const raw = await fs.readFile(getRuntimePath(), "utf-8");
-    return c.json(JSON.parse(raw) as Record<string, unknown>);
+    const config = JSON.parse(raw) as Record<string, unknown>;
+    // Merge runtime-detected bot identity so the dashboard can identify outgoing messages
+    config.instagram = {
+      ...((config.instagram as Record<string, unknown>) ?? {}),
+      fbId: BOT_FBID,
+    };
+    return c.json(config);
   } catch (err) {
     logger.error("Failed to read config", { error: (err as Error).message });
     return c.json({ error: "Failed to read config" }, 500);
@@ -148,15 +154,15 @@ app.post("/config", async (c) => {
 
 // Data API
 
-app.get("/api/chats", (c) => {
+app.get("/api/conversations", (c) => {
   try {
-    return c.json(getAllChats());
+    return c.json(getAllConversations());
   } catch (err) {
     return c.json({ error: (err as Error).message }, 500);
   }
 });
 
-app.get("/api/chats/:id/messages", (c) => {
+app.get("/api/conversations/:id/messages", (c) => {
   try {
     const chatId = c.req.param("id");
     const limit = Number(c.req.query("limit") ?? 100);

@@ -216,10 +216,9 @@ export async function initInstagramSession(): Promise<void> {
   await page
     .waitForSelector('div[contenteditable="true"]', { timeout: 10000 })
     .catch(() => {
-      logger.warn(
-        "Message input not visible after 10s — continuing anyway",
-        { chatId },
-      );
+      logger.warn("Message input not visible after 10s — continuing anyway", {
+        chatId,
+      });
     });
 
   logger.info("Instagram session ready", { chatId });

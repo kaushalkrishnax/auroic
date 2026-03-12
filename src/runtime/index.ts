@@ -28,6 +28,10 @@ const env = {
   chromiumProfileDir:
     process.env.CHROMIUM_PROFILE_DIR ?? "./data/chrome-auroic",
   aiUrl: process.env.AI_API_URL ?? "https://api.openai.com/v1/chat/completions",
+  igChatIds: (process.env.INSTAGRAM_CHAT_IDS ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
   aiKey: process.env.AI_API_KEY ?? "",
   igUsername: process.env.INSTAGRAM_USERNAME ?? "",
   igPassword: process.env.INSTAGRAM_PASSWORD ?? "",
@@ -43,29 +47,14 @@ function loadRuntime(): RuntimeJson {
 
 let runtime = loadRuntime();
 
-// Internal write flag — suppresses fs.watch reload when we wrote the file ourselves
-let _suppressNextReload = false;
+// Bot identity — auto-detected from the Instagram mailbox GraphQL response on first boot.
 
-// Bot identity — auto-detected and persisted to runtime.json so it survives restarts
-
-export let BOT_FBID: string | null = runtime.instagram?.fbId ?? null;
+export let BOT_FBID: string | null = null;
 
 export function setBotFbid(id: string): void {
   if (BOT_FBID === id) return;
   BOT_FBID = id;
-  try {
-    const updated = {
-      ...runtime,
-      instagram: { ...runtime.instagram, fbId: id },
-    };
-    _suppressNextReload = true;
-    fs.writeFileSync(RUNTIME_PATH, JSON.stringify(updated, null, 2), "utf-8");
-    runtime = loadRuntime();
-  } catch (err) {
-    logger.warn("Failed to persist bot fbId to runtime.json", {
-      error: (err as Error).message,
-    });
-  }
+  logger.info("Bot fbId auto-detected", { fbId: id });
 }
 
 // Config accessor
@@ -79,7 +68,7 @@ export function getConfig() {
       fbId: BOT_FBID,
       username: env.igUsername,
       password: env.igPassword,
-      chatIds: (runtime.instagram?.chatIds ?? []).map(String),
+      chatIds: env.igChatIds,
     },
     triggers: runtime.triggers,
     llm: {
@@ -88,12 +77,23 @@ export function getConfig() {
       systemPrompt: runtime.llm.systemPrompt,
       timeout: runtime.llm.timeout,
       models: runtime.llm.models,
-      translate: runtime.llm.translate,
       output: runtime.llm.output,
     },
     router: {
       host: runtime.router?.host ?? "http://localhost:11434",
       model: runtime.router?.model ?? "auroic-router-0.6b",
+      candidateThreshold: runtime.router?.candidateThreshold ?? 3,
+      timeoutMs: runtime.router?.timeoutMs ?? 12000,
+      systemPrompt:
+        runtime.router?.systemPrompt ??
+        "You are the Auroic Router. Given history messages H1-H5 and candidate messages C1-C3, output exactly one routing decision.",
+      think: runtime.router?.think ?? true,
+      options: {
+        temperature: runtime.router?.options?.temperature ?? 0.6,
+        top_p: runtime.router?.options?.top_p ?? 0.95,
+        top_k: runtime.router?.options?.top_k ?? 20,
+        repeat_penalty: runtime.router?.options?.repeat_penalty ?? 1.1,
+      },
     },
     debug: {
       logRouterWindow: runtime.debug?.logRouterWindow ?? true,
@@ -123,11 +123,6 @@ export function reloadRuntime(): boolean {
 export function watchRuntime(): void {
   fs.watch(RUNTIME_PATH, (eventType) => {
     if (eventType === "change") {
-      if (_suppressNextReload) {
-        _suppressNextReload = false;
-        logger.info("Suppressed reload triggered by internal write");
-        return;
-      }
       logger.info("runtime.json changed — reloading…");
       reloadRuntime();
     }
@@ -144,10 +139,6 @@ export default getConfig;
 // Runtime JSON shape
 
 interface RuntimeJson {
-  instagram?: {
-    chatIds: (string | number)[];
-    fbId?: string; // auto-detected; do not edit manually
-  };
   triggers: {
     mentions: string[];
     hashtags: string[];
@@ -158,12 +149,21 @@ interface RuntimeJson {
     systemPrompt: string;
     timeout: number;
     models: { low: string; medium: string; high: string };
-    translate: { effort: "low" | "medium" | "high" | "auto" };
     output: { maxTokens: number };
   };
   router?: {
     host: string;
     model: string;
+    candidateThreshold?: number;
+    timeoutMs?: number;
+    systemPrompt?: string;
+    think?: boolean;
+    options?: {
+      temperature?: number;
+      top_p?: number;
+      top_k?: number;
+      repeat_penalty?: number;
+    };
   };
   debug?: {
     logRouterWindow: boolean;

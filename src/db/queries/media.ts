@@ -4,8 +4,8 @@ import { media } from "@/db/schema.js";
 import type { SelectMedia, InsertMedia } from "@/db/schema.js";
 
 export interface MediaInput {
-  messageMid: string;
-  mediaType?: string | null;
+  messageId: string;
+  attachmentType?: string | null;
   url?: string | null;
   previewUrl?: string | null;
   width?: number | null;
@@ -17,8 +17,8 @@ export function insertMedia(input: MediaInput): void {
   getDB()
     .insert(media)
     .values({
-      messageMid: input.messageMid,
-      mediaType: input.mediaType ?? null,
+      messageId: input.messageId,
+      attachmentType: input.attachmentType ?? null,
       url: input.url ?? null,
       previewUrl: input.previewUrl ?? null,
       width: input.width ?? null,
@@ -28,11 +28,11 @@ export function insertMedia(input: MediaInput): void {
     .run();
 }
 
-export function getMediaForMessage(messageMid: string): SelectMedia[] {
+export function getMediaForMessage(messageId: string): SelectMedia[] {
   return getDB()
     .select()
     .from(media)
-    .where(eq(media.messageMid, messageMid))
+    .where(eq(media.messageId, messageId))
     .all();
 }
 

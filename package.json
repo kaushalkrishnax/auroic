@@ -5,7 +5,7 @@
   "description": "Personal Instagram AI assistant — monitors DMs, detects triggers, replies via AI with human-like typing.",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc && tsc-alias && cp src/runtime/runtime.json dist/runtime/runtime.json",
+    "build": "tsc && tsc-alias && cp src/runtime/runtime.json dist/runtime/runtime.json && mkdir -p dist/dashboard && cp src/dashboard/index.html dist/dashboard/index.html",
     "start": "node dist/index.js",
     "dev": "tsx --watch src/index.ts",
     "check": "tsc --noEmit",

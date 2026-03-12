@@ -1,21 +1,73 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "d61d5a60-cb26-47aa-9c09-3aa4be665d9b",
+  "id": "556c5045-7ce0-4007-8bde-95f8d6d48654",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
-    "chat_participants": {
-      "name": "chat_participants",
+    "conversation_metrics": {
+      "name": "conversation_metrics",
       "columns": {
-        "chat_id": {
-          "name": "chat_id",
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "message_rate": {
+          "name": "message_rate",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "active_user_count": {
+          "name": "active_user_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "average_message_length": {
+          "name": "average_message_length",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "energy_level": {
+          "name": "energy_level",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_updated_at": {
+          "name": "last_updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "conversation_participants": {
+      "name": "conversation_participants",
+      "columns": {
+        "conversation_id": {
+          "name": "conversation_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
-        "sender_fbid": {
-          "name": "sender_fbid",
+        "user_id": {
+          "name": "user_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
@@ -24,41 +76,48 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "chat_participants_chat_id_chats_chat_id_fk": {
-          "name": "chat_participants_chat_id_chats_chat_id_fk",
-          "tableFrom": "chat_participants",
-          "tableTo": "chats",
-          "columnsFrom": ["chat_id"],
-          "columnsTo": ["chat_id"],
+        "conversation_participants_conversation_id_conversations_conversation_id_fk": {
+          "name": "conversation_participants_conversation_id_conversations_conversation_id_fk",
+          "tableFrom": "conversation_participants",
+          "tableTo": "conversations",
+          "columnsFrom": ["conversation_id"],
+          "columnsTo": ["conversation_id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "chat_participants_sender_fbid_users_sender_fbid_fk": {
-          "name": "chat_participants_sender_fbid_users_sender_fbid_fk",
-          "tableFrom": "chat_participants",
+        "conversation_participants_user_id_users_user_id_fk": {
+          "name": "conversation_participants_user_id_users_user_id_fk",
+          "tableFrom": "conversation_participants",
           "tableTo": "users",
-          "columnsFrom": ["sender_fbid"],
-          "columnsTo": ["sender_fbid"],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["user_id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
-        "chat_participants_chat_id_sender_fbid_pk": {
-          "columns": ["chat_id", "sender_fbid"],
-          "name": "chat_participants_chat_id_sender_fbid_pk"
+        "conversation_participants_conversation_id_user_id_pk": {
+          "columns": ["conversation_id", "user_id"],
+          "name": "conversation_participants_conversation_id_user_id_pk"
         }
       },
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "chats": {
-      "name": "chats",
+    "conversations": {
+      "name": "conversations",
       "columns": {
-        "chat_id": {
-          "name": "chat_id",
+        "conversation_id": {
+          "name": "conversation_id",
           "type": "text",
           "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "platform": {
+          "name": "platform",
+          "type": "text",
+          "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
@@ -69,15 +128,15 @@
           "notNull": false,
           "autoincrement": false
         },
-        "image_url": {
-          "name": "image_url",
+        "avatar_url": {
+          "name": "avatar_url",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
         },
-        "group_creator_id": {
-          "name": "group_creator_id",
+        "created_by_user_id": {
+          "name": "created_by_user_id",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -99,8 +158,8 @@
           "autoincrement": false,
           "default": false
         },
-        "last_processed_mid": {
-          "name": "last_processed_mid",
+        "last_processed_message_id": {
+          "name": "last_processed_message_id",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -131,15 +190,15 @@
           "notNull": true,
           "autoincrement": true
         },
-        "message_mid": {
-          "name": "message_mid",
+        "message_id": {
+          "name": "message_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
-        "media_type": {
-          "name": "media_type",
+        "attachment_type": {
+          "name": "attachment_type",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -192,17 +251,17 @@
       "indexes": {
         "idx_media_message": {
           "name": "idx_media_message",
-          "columns": ["message_mid"],
+          "columns": ["message_id"],
           "isUnique": false
         }
       },
       "foreignKeys": {
-        "media_message_mid_messages_mid_fk": {
-          "name": "media_message_mid_messages_mid_fk",
+        "media_message_id_messages_message_id_fk": {
+          "name": "media_message_id_messages_message_id_fk",
           "tableFrom": "media",
           "tableTo": "messages",
-          "columnsFrom": ["message_mid"],
-          "columnsTo": ["mid"],
+          "columnsFrom": ["message_id"],
+          "columnsTo": ["message_id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -211,8 +270,8 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "messages": {
-      "name": "messages",
+    "memory_vectors": {
+      "name": "memory_vectors",
       "columns": {
         "id": {
           "name": "id",
@@ -221,173 +280,58 @@
           "notNull": true,
           "autoincrement": true
         },
-        "mid": {
-          "name": "mid",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "chat_id": {
-          "name": "chat_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "sender_fbid": {
-          "name": "sender_fbid",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "timestamp_ms": {
-          "name": "timestamp_ms",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "content_type": {
-          "name": "content_type",
+        "conversation_id": {
+          "name": "conversation_id",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
         },
-        "text_body": {
-          "name": "text_body",
+        "user_id": {
+          "name": "user_id",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
         },
-        "replied_to_mid": {
-          "name": "replied_to_mid",
+        "source_message_id": {
+          "name": "source_message_id",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
         },
-        "edited": {
-          "name": "edited",
+        "text": {
+          "name": "text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "embedding": {
+          "name": "embedding",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "embedding_model": {
+          "name": "embedding_model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "decay_score": {
+          "name": "decay_score",
           "type": "integer",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false,
-          "default": false
+          "default": 100
         },
-        "deleted": {
-          "name": "deleted",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false,
-          "default": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false,
-          "default": "(datetime('now'))"
-        }
-      },
-      "indexes": {
-        "messages_mid_unique": {
-          "name": "messages_mid_unique",
-          "columns": ["mid"],
-          "isUnique": true
-        },
-        "idx_messages_chat_time": {
-          "name": "idx_messages_chat_time",
-          "columns": ["chat_id", "timestamp_ms"],
-          "isUnique": false
-        },
-        "idx_messages_sender": {
-          "name": "idx_messages_sender",
-          "columns": ["sender_fbid"],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "messages_chat_id_chats_chat_id_fk": {
-          "name": "messages_chat_id_chats_chat_id_fk",
-          "tableFrom": "messages",
-          "tableTo": "chats",
-          "columnsFrom": ["chat_id"],
-          "columnsTo": ["chat_id"],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "outgoing_messages": {
-      "name": "outgoing_messages",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": true
-        },
-        "chat_id": {
-          "name": "chat_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "target_message_mid": {
-          "name": "target_message_mid",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "type": {
-          "name": "type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "effort": {
-          "name": "effort",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "title": {
-          "name": "title",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "content": {
-          "name": "content",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "reason": {
-          "name": "reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "platform_mid": {
-          "name": "platform_mid",
+        "last_accessed_at": {
+          "name": "last_accessed_at",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -408,8 +352,113 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "reactions": {
-      "name": "reactions",
+    "message_features": {
+      "name": "message_features",
+      "columns": {
+        "message_id": {
+          "name": "message_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "is_question": {
+          "name": "is_question",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": false
+        },
+        "sentiment_score": {
+          "name": "sentiment_score",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "emotion": {
+          "name": "emotion",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "length": {
+          "name": "length",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "emoji_count": {
+          "name": "emoji_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "mention_count": {
+          "name": "mention_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "has_url": {
+          "name": "has_url",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "language": {
+          "name": "language",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "topic_hint": {
+          "name": "topic_hint",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "(datetime('now'))"
+        }
+      },
+      "indexes": {
+        "idx_features_question": {
+          "name": "idx_features_question",
+          "columns": ["is_question"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "message_features_message_id_messages_message_id_fk": {
+          "name": "message_features_message_id_messages_message_id_fk",
+          "tableFrom": "message_features",
+          "tableTo": "messages",
+          "columnsFrom": ["message_id"],
+          "columnsTo": ["message_id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "message_reactions": {
+      "name": "message_reactions",
       "columns": {
         "id": {
           "name": "id",
@@ -418,15 +467,15 @@
           "notNull": true,
           "autoincrement": true
         },
-        "message_mid": {
-          "name": "message_mid",
+        "message_id": {
+          "name": "message_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
-        "sender_fbid": {
-          "name": "sender_fbid",
+        "user_id": {
+          "name": "user_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
@@ -445,16 +494,24 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "(datetime('now'))"
         }
       },
       "indexes": {},
       "foreignKeys": {
-        "reactions_message_mid_messages_mid_fk": {
-          "name": "reactions_message_mid_messages_mid_fk",
-          "tableFrom": "reactions",
+        "message_reactions_message_id_messages_message_id_fk": {
+          "name": "message_reactions_message_id_messages_message_id_fk",
+          "tableFrom": "message_reactions",
           "tableTo": "messages",
-          "columnsFrom": ["message_mid"],
-          "columnsTo": ["mid"],
+          "columnsFrom": ["message_id"],
+          "columnsTo": ["message_id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -463,14 +520,409 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
+    "messages": {
+      "name": "messages",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "message_id": {
+          "name": "message_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "timestamp_ms": {
+          "name": "timestamp_ms",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "message_type": {
+          "name": "message_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "text_content": {
+          "name": "text_content",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "reply_to_message_id": {
+          "name": "reply_to_message_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "is_edited": {
+          "name": "is_edited",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": false
+        },
+        "is_deleted": {
+          "name": "is_deleted",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": false
+        },
+        "raw_payload": {
+          "name": "raw_payload",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "processed_at": {
+          "name": "processed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "processing_lock_at": {
+          "name": "processing_lock_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "(datetime('now'))"
+        }
+      },
+      "indexes": {
+        "messages_message_id_unique": {
+          "name": "messages_message_id_unique",
+          "columns": ["message_id"],
+          "isUnique": true
+        },
+        "idx_messages_conversation_time": {
+          "name": "idx_messages_conversation_time",
+          "columns": ["conversation_id", "timestamp_ms"],
+          "isUnique": false
+        },
+        "idx_messages_user": {
+          "name": "idx_messages_user",
+          "columns": ["user_id"],
+          "isUnique": false
+        },
+        "idx_messages_reply": {
+          "name": "idx_messages_reply",
+          "columns": ["reply_to_message_id"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "messages_conversation_id_conversations_conversation_id_fk": {
+          "name": "messages_conversation_id_conversations_conversation_id_fk",
+          "tableFrom": "messages",
+          "tableTo": "conversations",
+          "columnsFrom": ["conversation_id"],
+          "columnsTo": ["conversation_id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "outgoing": {
+      "name": "outgoing",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "router_decision_id": {
+          "name": "router_decision_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "target_message_id": {
+          "name": "target_message_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "target_user_id": {
+          "name": "target_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "action_type": {
+          "name": "action_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "effort_level": {
+          "name": "effort_level",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "intent_label": {
+          "name": "intent_label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "message_content": {
+          "name": "message_content",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "execution_status": {
+          "name": "execution_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "platform_message_id": {
+          "name": "platform_message_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "execution_error": {
+          "name": "execution_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "(datetime('now'))"
+        }
+      },
+      "indexes": {
+        "idx_outgoing_conv": {
+          "name": "idx_outgoing_conv",
+          "columns": ["conversation_id"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "user_behavior": {
+      "name": "user_behavior",
+      "columns": {
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "message_frequency": {
+          "name": "message_frequency",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "average_length": {
+          "name": "average_length",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "emoji_usage": {
+          "name": "emoji_usage",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "aggression_score": {
+          "name": "aggression_score",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "helpfulness_score": {
+          "name": "helpfulness_score",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_updated_at": {
+          "name": "last_updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "user_behavior_conversation_id_user_id_pk": {
+          "columns": ["conversation_id", "user_id"],
+          "name": "user_behavior_conversation_id_user_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "user_memories": {
+      "name": "user_memories",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "memory_type": {
+          "name": "memory_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "summary": {
+          "name": "summary",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "confidence": {
+          "name": "confidence",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_referenced_at": {
+          "name": "last_referenced_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "(datetime('now'))"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
     "users": {
       "name": "users",
       "columns": {
-        "sender_fbid": {
-          "name": "sender_fbid",
+        "user_id": {
+          "name": "user_id",
           "type": "text",
           "primaryKey": true,
           "notNull": true,
+          "autoincrement": false
+        },
+        "platform_user_id": {
+          "name": "platform_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
           "autoincrement": false
         },
         "username": {
@@ -480,15 +932,15 @@
           "notNull": false,
           "autoincrement": false
         },
-        "full_name": {
-          "name": "full_name",
+        "display_name": {
+          "name": "display_name",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
         },
-        "profile_pic_url": {
-          "name": "profile_pic_url",
+        "avatar_url": {
+          "name": "avatar_url",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -501,6 +953,13 @@
           "notNull": false,
           "autoincrement": false,
           "default": false
+        },
+        "platform": {
+          "name": "platform",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "created_at": {
           "name": "created_at",

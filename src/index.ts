@@ -47,7 +47,6 @@ function onAppEvent(event: AppEvent): void {
   if (shuttingDown) return;
 
   if (event.type === "NEW_MESSAGE" || event.type === "EDIT") {
-    // Skip bot's own messages (NEW_MESSAGE has senderFbid, EDIT does not)
     if (event.type === "NEW_MESSAGE") {
       const config = getConfig();
       if (event.senderFbid === config.instagram.fbId) return;

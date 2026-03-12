@@ -5,13 +5,13 @@ import type { SelectMessage, InsertMessage } from "@/db/schema.js";
 import { sql } from "drizzle-orm";
 
 export interface IncomingMessageInput {
-  mid: string;
-  chatId: string;
-  senderFbid: string;
+  messageId: string;
+  conversationId: string;
+  userId: string;
   timestampMs: number;
-  contentType?: string | null;
-  textBody?: string | null;
-  repliedToMid?: string | null;
+  messageType?: string | null;
+  textContent?: string | null;
+  replyToMessageId?: string | null;
 }
 
 /** Returns the inserted row id, or null if the message already existed. */
@@ -22,13 +22,13 @@ export function insertIncomingMessage(
   const result = db
     .insert(messages)
     .values({
-      mid: msg.mid,
-      chatId: msg.chatId,
-      senderFbid: msg.senderFbid,
+      messageId: msg.messageId,
+      conversationId: msg.conversationId,
+      userId: msg.userId,
       timestampMs: msg.timestampMs,
-      contentType: msg.contentType ?? null,
-      textBody: msg.textBody ?? null,
-      repliedToMid: msg.repliedToMid ?? null,
+      messageType: msg.messageType ?? null,
+      textContent: msg.textContent ?? null,
+      replyToMessageId: msg.replyToMessageId ?? null,
     })
     .onConflictDoNothing()
     .returning({ id: messages.id })
@@ -37,60 +37,45 @@ export function insertIncomingMessage(
   return result?.id ?? null;
 }
 
-export function editMessage(mid: string, newText: string): void {
+export function editMessage(messageId: string, newText: string): void {
   getDB()
     .update(messages)
-    .set({ textBody: newText, edited: true })
-    .where(eq(messages.mid, mid))
+    .set({ textContent: newText, isEdited: true })
+    .where(eq(messages.messageId, messageId))
     .run();
 }
 
-export function markMessageDeleted(mid: string): void {
+export function markMessageDeleted(messageId: string): void {
   getDB()
     .update(messages)
-    .set({ deleted: true })
-    .where(eq(messages.mid, mid))
+    .set({ isDeleted: true })
+    .where(eq(messages.messageId, messageId))
     .run();
 }
 
-/** Returns a single message by its mid. */
-export function getMessageByMid(mid: string): SelectMessage | undefined {
+/** Returns a single message by its message_id. */
+export function getMessageByMid(messageId: string): SelectMessage | undefined {
   return getDB()
     .select()
     .from(messages)
-    .where(eq(messages.mid, mid))
+    .where(eq(messages.messageId, messageId))
     .limit(1)
     .get();
 }
 
-/** Returns last N non-deleted messages for a chat, oldest first. */
-export function getLatestMessages(chatId: string, limit = 5): SelectMessage[] {
-  const rows = getDB()
-    .select()
-    .from(messages)
-    .where(and(eq(messages.chatId, chatId), eq(messages.deleted, false)))
-    .orderBy(desc(messages.timestampMs))
-    .limit(limit)
-    .all();
-  return rows.reverse();
-}
-
-/**
- * Returns last N non-deleted, unprocessed, non-bot messages for building
- * the router sliding window. Ordered oldest-first.
- */
-export function getWindowMessages(
-  chatId: string,
-  botId: string,
+/** Returns last N non-deleted messages for a conversation, oldest first. */
+export function getLatestMessages(
+  conversationId: string,
   limit = 5,
+  includeDeleted = false,
 ): SelectMessage[] {
   const rows = getDB()
     .select()
     .from(messages)
     .where(
       and(
-        eq(messages.chatId, chatId),
-        eq(messages.deleted, false),
+        eq(messages.conversationId, conversationId),
+        eq(messages.isDeleted, includeDeleted ?? false),
       ),
     )
     .orderBy(desc(messages.timestampMs))
@@ -99,9 +84,37 @@ export function getWindowMessages(
   return rows.reverse();
 }
 
-/** Returns the newest non-deleted, unprocessed, unlocked message with text body not sent by botId. */
+/**
+ * Returns history (last N processed/bot messages) and candidates (unprocessed user messages, up to 3).
+ * History is ordered oldest-first. Candidates are ordered oldest-first.
+ */
+export function getWindowMessages(
+  conversationId: string,
+  botId: string,
+  historyLimit = 5,
+): { history: SelectMessage[]; candidates: SelectMessage[] } {
+  const allRecent = getLatestMessages(conversationId, historyLimit + 3);
+
+  const candidates: SelectMessage[] = [];
+  const history: SelectMessage[] = [];
+
+  for (const m of allRecent) {
+    if (!m.processedAt && m.userId !== botId && m.textContent) {
+      candidates.push(m);
+    } else {
+      history.push(m);
+    }
+  }
+
+  return {
+    history: history.slice(-historyLimit),
+    candidates: candidates.slice(0, 3),
+  };
+}
+
+/** Returns the newest non-deleted, unprocessed, unlocked message with text not sent by botId. */
 export function getNewestIncomingTextMessage(
-  chatId: string,
+  conversationId: string,
   botId: string,
 ): SelectMessage | undefined {
   if (!botId) return undefined;
@@ -110,10 +123,10 @@ export function getNewestIncomingTextMessage(
     .from(messages)
     .where(
       and(
-        eq(messages.chatId, chatId),
-        ne(messages.senderFbid, botId),
-        isNotNull(messages.textBody),
-        eq(messages.deleted, false),
+        eq(messages.conversationId, conversationId),
+        ne(messages.userId, botId),
+        isNotNull(messages.textContent),
+        eq(messages.isDeleted, false),
         isNull(messages.processedAt),
         isNull(messages.processingLockAt),
       ),
@@ -123,14 +136,17 @@ export function getNewestIncomingTextMessage(
     .get();
 }
 
-/** Returns all messages, optionally filtered by chatId. */
-export function getAllMessages(chatId?: string, limit = 100): SelectMessage[] {
+/** Returns all messages, optionally filtered by conversationId. */
+export function getAllMessages(
+  conversationId?: string,
+  limit = 100,
+): SelectMessage[] {
   const db = getDB();
-  if (chatId) {
+  if (conversationId) {
     return db
       .select()
       .from(messages)
-      .where(eq(messages.chatId, chatId))
+      .where(eq(messages.conversationId, conversationId))
       .orderBy(desc(messages.timestampMs))
       .limit(limit)
       .all();
@@ -144,32 +160,32 @@ export function getAllMessages(chatId?: string, limit = 100): SelectMessage[] {
 }
 
 /** Locks a message for processing. */
-export function lockMessage(mid: string): void {
+export function lockMessage(messageId: string): void {
   getDB()
     .update(messages)
     .set({ processingLockAt: sql`(datetime('now'))` })
-    .where(eq(messages.mid, mid))
+    .where(eq(messages.messageId, messageId))
     .run();
 }
 
 /** Marks a message as processed and releases the lock. */
-export function markMessageProcessed(mid: string): void {
+export function markMessageProcessed(messageId: string): void {
   getDB()
     .update(messages)
     .set({
       processedAt: sql`(datetime('now'))`,
       processingLockAt: null,
     })
-    .where(eq(messages.mid, mid))
+    .where(eq(messages.messageId, messageId))
     .run();
 }
 
 /** Releases the processing lock on a message (for retry after failure). */
-export function unlockMessage(mid: string): void {
+export function unlockMessage(messageId: string): void {
   getDB()
     .update(messages)
     .set({ processingLockAt: null })
-    .where(eq(messages.mid, mid))
+    .where(eq(messages.messageId, messageId))
     .run();
 }
 
@@ -189,9 +205,9 @@ export function clearStaleLocks(timeoutMinutes = 2): number {
   return result.changes;
 }
 
-/** Returns all unprocessed messages for a chat (processed_at IS NULL), excluding bot messages. */
+/** Returns all unprocessed messages for a conversation (processed_at IS NULL), excluding bot messages. */
 export function getUnprocessedMessages(
-  chatId: string,
+  conversationId: string,
   botId: string,
 ): SelectMessage[] {
   if (!botId) return [];
@@ -200,10 +216,10 @@ export function getUnprocessedMessages(
     .from(messages)
     .where(
       and(
-        eq(messages.chatId, chatId),
-        ne(messages.senderFbid, botId),
-        isNotNull(messages.textBody),
-        eq(messages.deleted, false),
+        eq(messages.conversationId, conversationId),
+        ne(messages.userId, botId),
+        isNotNull(messages.textContent),
+        eq(messages.isDeleted, false),
         isNull(messages.processedAt),
       ),
     )

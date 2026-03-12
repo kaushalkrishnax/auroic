@@ -11,24 +11,28 @@ import type { ActionContext } from "@/types/index.js";
 export async function executeText(
   context: ActionContext,
 ): Promise<string | null> {
-  const { chatId, decision, window } = context;
+  const { chatId, decision, history, candidates, targetTextContent } = context;
 
   logger.info("Action: text", {
     chatId,
     target: decision.target,
     effort: decision.effort,
-    title: decision.title,
   });
 
-  if (!decision.effort || !decision.title) {
-    logger.warn("Text action missing required fields (effort/title)", decision);
+  if (!decision.effort) {
+    logger.warn("Text action missing effort level", decision);
     return null;
   }
 
+  // Only expose the target candidate to the generator — other candidates are irrelevant noise.
+  const generatorCandidates = targetTextContent
+    ? [targetTextContent]
+    : candidates;
+
   try {
     const replyText = await generateReply(
-      window,
-      decision.title,
+      history,
+      generatorCandidates,
       decision.effort,
     );
 
@@ -37,7 +41,7 @@ export async function executeText(
       preview: replyText.slice(0, 80),
     });
 
-    await sendText(replyText, chatId, context.targetMid ?? undefined);
+    await sendText(replyText, chatId, context.targetMessageId ?? undefined);
 
     return replyText;
   } catch (err) {

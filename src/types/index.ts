@@ -3,19 +3,12 @@
  * DB row types are imported directly from @/db/schema.
  */
 
-export type ActionType =
-  | "text"
-  | "ignore"
-  | "acknowledge"
-  | "react"
-  | "media"
-  | "translate"
-  | "command";
+export type ActionType = "text" | "ignore" | "react" | "media";
 export type EffortLevel = "low" | "medium" | "high";
 
 export interface RouterDecision {
   type: ActionType;
-  /** M1–M5 slot or null */
+  /** C1–C3 candidate slot or null */
   target: string | null;
   effort: EffortLevel | null;
   title: string | null;
@@ -25,26 +18,30 @@ export interface RouterDecision {
 /** Matches the Drizzle SelectMessage row shape used in the router pipeline. */
 export interface Message {
   id: number;
-  mid: string;
-  chatId: string;
-  senderFbid: string;
+  messageId: string;
+  conversationId: string;
+  userId: string;
   timestampMs: number;
-  contentType: string | null;
-  textBody: string | null;
-  repliedToMid: string | null;
-  edited: boolean | null;
-  deleted: boolean | null;
+  messageType: string | null;
+  textContent: string | null;
+  replyToMessageId: string | null;
+  isEdited: boolean | null;
+  isDeleted: boolean | null;
+  rawPayload: string | null;
+  processedAt: string | null;
+  processingLockAt: string | null;
   createdAt: string | null;
 }
 
 export interface ActionContext {
   chatId: string;
   message: Message;
-  /** 5-element window (oldest → newest), padded with "<EMPTY>" */
-  window: string[];
+  /** H1–H5 history + C1–C3 candidates sent to the router */
+  history: string[];
+  candidates: string[];
   decision: RouterDecision;
-  targetMid: string | null;
-  targetTextBody: string | null;
+  targetMessageId: string | null;
+  targetTextContent: string | null;
 }
 
 /** Raw Instagram user shape from GraphQL responses */

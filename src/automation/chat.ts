@@ -54,15 +54,14 @@ async function findMessageContainer(
     return null;
   }
 
-  // Fetch DB messages first so the window size can be capped on all three
-  // dimensions: DOM groups available, limit, and actual DB rows returned.
-  // Without capping on dbMessages.length, domGroups and dbSlice can have
-  // different lengths, causing index mismatches and reactions on wrong messages.
   const dbMessages = getLatestMessages(chatId, 10);
   const take = Math.min(10, groupCount, dbMessages.length);
 
   if (!take) {
-    logger.warn("No messages to build window from", { groupCount, dbCount: dbMessages.length });
+    logger.warn("No messages to build window from", {
+      groupCount,
+      dbCount: dbMessages.length,
+    });
     return null;
   }
 
@@ -74,9 +73,9 @@ async function findMessageContainer(
   const dbSlice = dbMessages.slice(-take);
 
   logger.info("Messages in DB window", { count: dbSlice.length });
-  logger.info("DB mids in window", { mids: dbSlice.map((m) => m.mid) });
+  logger.info("DB mids in window", { mids: dbSlice.map((m) => m.messageId) });
 
-  const index = dbSlice.findIndex((m) => m.mid === targetMid);
+  const index = dbSlice.findIndex((m) => m.messageId === targetMid);
 
   if (index === -1) {
     logger.warn("Target mid not found in window", { targetMid, chatId });
@@ -202,6 +201,73 @@ export async function sendSticker(
     logger.warn("Send Sticker failed", {
       error: (err as Error).message,
     });
+  }
+}
+
+/**
+ * Try to send a sticker matching `title`. Falls back to a GIF in the same
+ * already-open media dialog if no sticker result is found.
+ */
+export async function sendStickerOrGIF(
+  title: string,
+  chatId: string,
+  targetMid?: string,
+): Promise<void> {
+  try {
+    const page = getPage();
+    await selectToReply(chatId, targetMid);
+    const mediaButton = page.locator(SELECTORS.mediaButton).first();
+
+    if (!(await click(mediaButton))) {
+      logger.warn("Media button not found");
+      return;
+    }
+
+    const mediaDialog = page.locator(SELECTORS.dialog).first();
+    const mediaTabList = mediaDialog.locator(SELECTORS.tabList).first();
+    const query = title?.replace("media:", "").replace("_", " ");
+
+    // --- try sticker first ---
+    const stickerTab = mediaTabList.locator(SELECTORS.mediaTabButton).nth(0);
+    if (await click(stickerTab)) {
+      const stickerInput = mediaDialog
+        .locator(SELECTORS.stickerSearchInput)
+        .first();
+      if (await visible(stickerInput)) {
+        await stickerInput.fill(query);
+        const stickerResult = mediaDialog
+          .locator(SELECTORS.mediaItemButton)
+          .nth(Math.floor(Math.random() * 6));
+        if (await click(stickerResult)) {
+          logger.info("Sticker sent", { title, reply: !!targetMid });
+          return;
+        }
+        logger.info("No sticker results — falling back to GIF", { title });
+      }
+    }
+
+    // --- fallback: GIF (dialog is still open) ---
+    const gifTab = mediaTabList.locator(SELECTORS.mediaTabButton).nth(1);
+    if (!(await click(gifTab))) {
+      logger.warn("GIF tab not found during fallback");
+      return;
+    }
+    const gifInput = mediaDialog.locator(SELECTORS.gifSearchInput).first();
+    if (!(await visible(gifInput))) {
+      logger.warn("GIF search input not found during fallback");
+      return;
+    }
+    await gifInput.fill(query);
+    const gifResult = mediaDialog
+      .locator(SELECTORS.mediaItemButton)
+      .nth(Math.floor(Math.random() * 6));
+    if (await click(gifResult)) {
+      logger.info("GIF sent (sticker fallback)", { title, reply: !!targetMid });
+    } else {
+      logger.warn("No GIF results found either", { title });
+    }
+  } catch (err) {
+    logger.warn("sendStickerOrGIF failed", { error: (err as Error).message });
   }
 }
 

@@ -1,5 +1,5 @@
 /**
- * Router — classifies a 5-message window and returns a routing decision.
+ * Router — classifies history + candidate messages and returns a routing decision.
  */
 
 import { Ollama } from "ollama";
@@ -17,8 +17,27 @@ function getOllama(): Ollama {
   return _ollama;
 }
 
-export function formatWindow(window: string[]): string {
-  return window.map((msg, i) => `M${i + 1}: ${msg}`).join("\n");
+export function formatWindow(history: string[], candidates: string[]): string {
+  const h = [...history];
+  while (h.length < 5) h.unshift("...");
+
+  // Align candidates to the right: 1 msg → C3, 2 msgs → C2+C3, 3 msgs → C1+C2+C3
+  const c = [...candidates];
+  while (c.length < 3) c.unshift("...");
+
+  const lines = [
+    ...h.map((msg, i) => `H${i + 1}: ${stripMentions(msg)}`),
+    ...c.map((msg, i) => `C${i + 1}: ${stripMentions(msg, true)}`),
+  ];
+  return lines.join("\n");
+}
+
+function stripMentions(text: string, keepBot = false): string {
+  const pattern = keepBot ? /@(?!BOT\b)\S+/gi : /@\S+/g;
+  return text
+    .replace(pattern, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 }
 
 function parseRouterOutput(output: string): RouterDecision {
@@ -50,23 +69,24 @@ function parseRouterOutput(output: string): RouterDecision {
 
       switch (key) {
         case "TYPE":
-          if (
-            [
-              "text",
-              "ignore",
-              "acknowledge",
-              "react",
-              "media",
-              "translate",
-              "command",
-            ].includes(lower)
-          ) {
+          if (["text", "ignore", "react", "media"].includes(lower)) {
             decision.type = lower as ActionType;
           }
           break;
-        case "TARGET":
-          decision.target = lower === "null" ? null : value;
+        case "TARGET": {
+          if (lower === "null") {
+            decision.target = null;
+          } else {
+            const slotMatch = value.match(/C(\d+)/i);
+            if (slotMatch) {
+              const slot = Math.min(parseInt(slotMatch[1], 10), 3);
+              decision.target = `C${slot}`;
+            } else {
+              decision.target = value;
+            }
+          }
           break;
+        }
         case "EFFORT":
           if (["low", "medium", "high"].includes(lower)) {
             decision.effort = lower as EffortLevel;
@@ -87,15 +107,28 @@ function parseRouterOutput(output: string): RouterDecision {
   return decision;
 }
 
-export async function invokeRouter(window: string[]): Promise<RouterDecision> {
+export async function invokeRouter(
+  history: string[],
+  candidates: string[],
+): Promise<RouterDecision> {
   const config = getConfig();
-  const formattedWindow = formatWindow(window);
+  const formattedWindow = formatWindow(history, candidates);
   logger.info("Invoking router", { window: formattedWindow });
 
   try {
     const response = await getOllama().chat({
       model: config.router.model,
-      messages: [{ role: "user", content: formattedWindow }],
+      messages: [
+        {
+          role: "system",
+          content: config.router.systemPrompt,
+        },
+        {
+          role: "user",
+          content: formattedWindow + `${!config.router.think && "\n/no_think"}`,
+        },
+      ],
+      options: config.router.options,
     });
 
     const raw = response.message.content.trim();

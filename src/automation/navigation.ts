@@ -5,7 +5,7 @@
 import { getPage } from "@/automation/session.js";
 import SELECTORS from "@/instagram/selectors.js";
 import logger from "@/utils/logger.js";
-import { getChatById } from "@/db/queries/chats.js";
+import { getConversationById } from "@/db/queries/conversations.js";
 
 export async function navigateToChat(chatId: string): Promise<void> {
   const page = getPage();
@@ -18,7 +18,7 @@ export async function navigateToChat(chatId: string): Promise<void> {
 
   logger.info("Navigating to chat…", { chatId });
 
-  const chat = await getChatById(chatId);
+  const chat = await getConversationById(chatId);
   const chatTitle = chat?.title || "unknown";
 
   await openChatByTitle(chatTitle);

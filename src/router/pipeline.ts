@@ -7,9 +7,9 @@
  *   1. Load message by mid
  *   2. Skip if bot's own, already processed/locked, no text
  *   3. Detect triggers — if found, replace with @BOT
- *   4. Build 5-message sliding window
+ *   4. Build history (H1–H5) + candidates (C1–C3) context
  *   5. Invoke router
- *   6. Resolve target with safety rule
+ *   6. Resolve target from candidate slots
  *   7. Dispatch action
  *   8. Audit log + mark processed
  */
@@ -21,7 +21,7 @@ import {
   markMessageProcessed,
   unlockMessage,
 } from "@/db/queries/messages.js";
-import { insertOutgoingMessage } from "@/db/queries/outgoing.js";
+import { insertOutgoing } from "@/db/queries/outgoing.js";
 import { invokeRouter } from "@/router/router.js";
 import { executeAction } from "@/router/dispatcher.js";
 import { emitEvent } from "@/events.js";
@@ -55,12 +55,6 @@ function detectTrigger(
     }
   }
 
-  for (const keyword of triggers.keywords ?? []) {
-    if (lower.includes(keyword.toLowerCase())) {
-      return { triggered: true, match: keyword };
-    }
-  }
-
   return { triggered: false, match: null };
 }
 
@@ -75,54 +69,24 @@ function applyBotTag(text: string, triggerMatch: string): string {
     .trim();
 }
 
-// Target resolver with safety rule
+const _candidateBatchStart = new Map<string, number>();
 
 function resolveTarget(
   target: string | null,
-  msgs: Message[],
-  botId: string,
+  candidateMsgs: Message[],
 ): Message | null {
   if (!target) return null;
 
-  const match = target.match(/M(\d)/i);
+  const match = target.match(/C(\d)/i);
   if (!match) return null;
 
-  const index = parseInt(match[1], 10) - 1;
-  const padOffset = 5 - msgs.length;
-  const realIndex = index - padOffset;
+  const slotIndex = parseInt(match[1], 10) - 1;
+  const offset = 3 - candidateMsgs.length;
+  const realIndex = slotIndex - offset;
 
-  if (realIndex < 0 || realIndex >= msgs.length) return null;
+  if (realIndex < 0 || realIndex >= candidateMsgs.length) return null;
 
-  let resolved = msgs[realIndex];
-
-  // Safety rule: if router selected a bot message, shift to nearest valid user message
-  if (resolved.senderFbid === botId) {
-    for (let i = realIndex + 1; i < msgs.length; i++) {
-      if (msgs[i].senderFbid !== botId) {
-        resolved = msgs[i];
-        logger.info(
-          "Target safety: shifted from bot message to next user message",
-          {
-            originalIndex: realIndex,
-            newIndex: i,
-          },
-        );
-        return resolved;
-      }
-    }
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      if (msgs[i].senderFbid !== botId) {
-        resolved = msgs[i];
-        logger.info("Target safety: fallback to newest user message", {
-          index: i,
-        });
-        return resolved;
-      }
-    }
-    return null;
-  }
-
-  return resolved;
+  return candidateMsgs[realIndex];
 }
 
 // Process a single message
@@ -137,13 +101,20 @@ export async function processMessage(
   // Load the specific message
   const msg = getMessageByMid(mid);
   if (!msg) return;
-  if (msg.senderFbid === botId) return;
+  if (msg.userId === botId) return;
   if (msg.processedAt || msg.processingLockAt) return;
-  if (!msg.textBody) return;
+  if (!msg.textContent) return;
 
-  const messageText = msg.textBody;
-
+  const messageText = msg.textContent;
   const trigger = detectTrigger(messageText, config);
+
+  // Also treat a direct reply to the bot as a trigger
+  const isReplyToBot = (() => {
+    if (!msg.replyToMessageId) return false;
+    const repliedTo = getMessageByMid(msg.replyToMessageId);
+    return repliedTo?.userId === botId;
+  })();
+  const isTrigger = trigger.triggered || isReplyToBot;
 
   lockMessage(mid);
 
@@ -151,37 +122,77 @@ export async function processMessage(
     logger.info("Processing message", {
       chatId,
       mid,
-      triggered: trigger.triggered,
+      triggered: isTrigger,
       trigger: trigger.match,
+      isReplyToBot,
     });
 
-    let windowMessages: Message[];
-    let texts: string[];
+    let historyMsgs: Message[];
+    let candidateMsgs: Message[];
+    let historyTexts: string[];
+    let candidateTexts: string[];
 
-    if (trigger.triggered && trigger.match) {
-      windowMessages = [msg as Message];
-      texts = [
-        "...",
-        "...",
-        "...",
-        "...",
-        applyBotTag(messageText, trigger.match),
-      ];
-    } else {
-      windowMessages = getWindowMessages(chatId, botId, 5) as Message[];
-      texts = windowMessages.map((m) => m.textBody ?? "");
-      while (texts.length < 5) texts.unshift("...");
+    const windowResult = getWindowMessages(chatId, botId, 5);
+    historyMsgs = windowResult.history;
+    candidateMsgs = windowResult.candidates;
+    historyTexts = historyMsgs.map((m) => m.textContent ?? "");
+
+    // Threshold gate (bypassed for trigger invocations and replies to bot).
+    if (!isTrigger) {
+      const threshold = config.router.candidateThreshold;
+      const timeoutMs = config.router.timeoutMs;
+
+      if (!_candidateBatchStart.has(chatId)) {
+        _candidateBatchStart.set(chatId, Date.now());
+      }
+      const batchStart = _candidateBatchStart.get(chatId)!;
+      const elapsed = Date.now() - batchStart;
+      const ready = candidateMsgs.length >= threshold || elapsed >= timeoutMs;
+
+      if (!ready) {
+        const remaining = timeoutMs - elapsed;
+        logger.info("Router deferred: waiting for more candidates or timeout", {
+          chatId,
+          candidates: candidateMsgs.length,
+          threshold,
+          elapsedMs: elapsed,
+          retryInMs: remaining,
+        });
+        unlockMessage(mid);
+        setTimeout(() => processMessage(chatId, mid), remaining);
+        return;
+      }
+
+      _candidateBatchStart.delete(chatId);
     }
+
+    candidateTexts = candidateMsgs.map((m) => {
+      let text = m.textContent ?? "";
+
+      // If this message is a reply to a bot message, treat it as a direct
+      if (m.replyToMessageId) {
+        const repliedTo = getMessageByMid(m.replyToMessageId);
+        if (repliedTo && repliedTo.userId === botId) {
+          text = `@BOT ${text}`;
+        }
+      }
+
+      if (trigger.triggered && trigger.match) {
+        return applyBotTag(text, trigger.match);
+      }
+      return text;
+    });
 
     if (config.debug.logRouterWindow) {
       logger.info("Router window", {
         chatId,
-        window: texts.map((t, i) => `M${i + 1}:${t}`).join(" | "),
+        history: historyTexts.map((t, i) => `H${i + 1}:${t}`).join(" | "),
+        candidates: candidateTexts.map((t, i) => `C${i + 1}:${t}`).join(" | "),
       });
     }
 
     // Invoke router
-    const decision = await invokeRouter(texts);
+    const decision = await invokeRouter(historyTexts, candidateTexts);
 
     logger.info("Router decision", {
       chatId,
@@ -193,16 +204,17 @@ export async function processMessage(
 
     emitEvent({ type: "ROUTER_DECISION", chatId, decision, resultText: null });
 
-    // Resolve target message with safety rule
-    const targetMsg = resolveTarget(decision.target, windowMessages, botId);
+    // Resolve target message from candidates
+    const targetMsg = resolveTarget(decision.target, candidateMsgs);
 
     const context: ActionContext = {
       chatId,
       message: msg as Message,
-      window: texts,
+      history: historyTexts,
+      candidates: candidateTexts,
       decision,
-      targetMid: targetMsg?.mid ?? null,
-      targetTextBody: targetMsg?.textBody ?? null,
+      targetMessageId: targetMsg?.messageId ?? null,
+      targetTextContent: targetMsg?.textContent ?? null,
     };
 
     // Execute action
@@ -217,15 +229,15 @@ export async function processMessage(
     }
 
     // Audit log
-    insertOutgoingMessage({
-      chatId,
-      targetMessageMid: targetMsg?.mid ?? null,
-      type: decision.type,
-      effort: decision.effort ?? null,
-      title: decision.title ?? null,
-      content: resultText,
-      reason: decision.reason ?? null,
-      platformMid: null,
+    insertOutgoing({
+      conversationId: chatId,
+      targetMessageId: targetMsg?.messageId ?? null,
+      actionType: decision.type,
+      effortLevel: decision.effort ?? null,
+      intentLabel: decision.title ?? null,
+      messageContent: resultText,
+      executionStatus: resultText !== null ? "sent" : "failed",
+      platformMessageId: null,
     });
 
     emitEvent({
@@ -235,7 +247,11 @@ export async function processMessage(
       content: resultText,
     });
 
-    markMessageProcessed(mid);
+    // Mark all candidates processed — prevents leftover candidates from being
+    // re-picked in the next pipeline run and triggering duplicate actions.
+    for (const m of candidateMsgs) {
+      markMessageProcessed(m.messageId);
+    }
   } catch (err) {
     unlockMessage(mid);
     throw err;

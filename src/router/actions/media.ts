@@ -1,44 +1,26 @@
 /**
- * Action: media (stub)
- * Placeholder for future media-sending capability.
+ * Action: media
+ * Send a GIF in response to a message.
+ * Uses the TITLE field as a 2-3 word natural language search query.
  */
 
 import logger from "@/utils/logger.js";
 import type { ActionContext } from "@/types/index.js";
-import { sendGIF, sendSticker } from "@/automation/chat.js";
+import { sendStickerOrGIF } from "@/automation/chat.js";
 
 export async function executeMedia(
   context: ActionContext,
 ): Promise<string | null> {
-  const { effort, title } = context.decision;
+  const { title } = context.decision;
 
-  switch (effort) {
-    case "low":
-      await sendSticker(
-        title || "funny",
-        context.chatId,
-        context.targetMid ?? undefined,
-      );
-      break;
+  const query = title || "funny";
+  logger.info("Action: media", { chatId: context.chatId, query });
 
-    case "medium":
-      await sendGIF(
-        title || "funny",
-        context.chatId,
-        context.targetMid ?? undefined,
-      );
-      break;
+  await sendStickerOrGIF(
+    query,
+    context.chatId,
+    context.targetMessageId ?? undefined,
+  );
 
-    case "high":
-      await sendGIF(
-        title || "funny",
-        context.chatId,
-        context.targetMid ?? undefined,
-      );
-      break;
-
-    default:
-      logger.warn(`Media action with unknown effort level: ${effort}`);
-  }
   return null;
 }

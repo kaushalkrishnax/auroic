@@ -18,12 +18,12 @@ export async function executeReact(
     return null;
   }
 
-  if (!context.targetMid) {
-    logger.warn("React action missing target mid — skipping");
+  if (!context.targetMessageId) {
+    logger.warn("React action missing target message id — skipping");
     return null;
   }
 
-  await addReaction(decision.title, chatId, context.targetMid);
+  await addReaction(decision.title, chatId, context.targetMessageId);
 
   return decision.title;
 }

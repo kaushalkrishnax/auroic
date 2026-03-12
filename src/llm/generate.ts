@@ -1,7 +1,7 @@
 /**
  * LLM text generation — used by the "text" action handler.
  *
- * Sends the 5-message window to the LLM with the router's title as a framing hint.
+ * Sends history + candidates context to the LLM for reply generation.
  */
 
 import getConfig from "@/runtime/index.js";
@@ -11,29 +11,27 @@ import type { ChatMessage } from "@/llm/client.js";
 import type { EffortLevel } from "@/types/index.js";
 
 export async function generateReply(
-  window: string[],
-  title: string,
+  history: string[],
+  candidates: string[],
   effort: EffortLevel,
 ): Promise<string> {
   const config = getConfig();
   const model = resolveModel(effort);
   const systemPrompt = config.llm.systemPrompt;
 
-  const windowText = window.map((msg, i) => `M${i + 1}: ${msg}`).join("\n");
+  const h = [...history];
+  while (h.length < 5) h.unshift("...");
 
-  const userContent = [
-    `Here is a conversation window (M1=oldest, M5=newest):`,
-    windowText,
-    ``,
-    `Router hint: "${title}"`,
-    `Reply to the conversation as a natural participant. Your reply targets M5.`,
-  ].join("\n");
+  const historyText = h.map((msg, i) => `H${i + 1}: ${msg}`).join("\n");
+  const targetText = candidates[0] ?? "";
 
   const messages: ChatMessage[] = [
     { role: "system", content: systemPrompt },
-    { role: "user", content: userContent },
+    { role: "user", content: historyText },
+    { role: "assistant", content: "ok" },
+    { role: "user", content: targetText },
   ];
 
-  logger.info("LLM generate", { model, effort, title });
+  logger.info("LLM generate", { model, effort });
   return chatCompletion(messages, model);
 }
