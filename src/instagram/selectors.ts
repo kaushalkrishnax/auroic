@@ -7,7 +7,7 @@ const SELECTORS = Object.freeze({
   emailInput: 'input[name="username"], input[name="email"]',
   passwordInput: 'input[name="password"], input[name="pass"]',
 
-  submitButton: 'button[type="submit"], div[role="button"]',
+  submitButton: 'button[type="submit"], div[role="button"][aria-label="Log In"]',
   continueButton: 'div[role="button"][aria-label="Continue"]',
 
   notNowButton: "button",
