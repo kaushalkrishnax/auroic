@@ -3,12 +3,14 @@
  * Message targeting uses index-based DOM matching instead of text search.
  */
 
-import type { Locator } from "playwright";
+import type { Locator, Page } from "playwright";
+import { find } from "node-emoji";
 import { getPage } from "@/automation/session.js";
+import { getConversationById } from "@/db/queries/conversations.js";
 import { getLatestMessages } from "@/db/queries/messages.js";
 import SELECTORS from "@/instagram/selectors.js";
 import logger from "@/utils/logger.js";
-import { find } from "node-emoji";
+import { sleep } from "@/utils/delay.js";
 
 /* ------------------------------------------------ */
 /* Helper utilities                                  */
@@ -128,6 +130,14 @@ export async function sendText(
 ): Promise<void> {
   try {
     const page = getPage();
+    const conversation = getConversationById(chatId);
+    const trimmedText = text.trim();
+    const outgoingText =
+      conversation?.isGroup === true || trimmedText.toUpperCase().endsWith("@BOT")
+        ? text
+        : trimmedText.length
+          ? `${trimmedText} @BOT`
+          : "@BOT";
 
     await selectToReply(chatId, targetMid);
 
@@ -140,18 +150,85 @@ export async function sendText(
 
     await input.click();
     await input.fill("");
-    await input.pressSequentially(text, { delay: 15 });
+    await input.pressSequentially(outgoingText, { delay: 15 });
     await input.press("Enter");
 
     logger.info("Text message sent", {
-      length: text.length,
+      length: outgoingText.length,
       reply: !!targetMid,
+      botTagAttached: conversation?.isGroup !== true,
     });
   } catch (err) {
     logger.warn("Send text failed", {
       error: (err as Error).message,
     });
   }
+}
+
+/**
+ * Opens media dialog and switches to the specified tab
+ */
+async function openMediaTab(
+  page: Page,
+  tabIndex: number,
+): Promise<Locator | null> {
+  const mediaButton = page.locator(SELECTORS.mediaButton).first();
+
+  if (!(await click(mediaButton))) {
+    logger.warn("Media button not found");
+    return null;
+  }
+
+  const mediaDialog = page.locator(SELECTORS.dialog).first();
+  const mediaTabList = mediaDialog.locator(SELECTORS.tabList).first();
+  const tab = mediaTabList.locator(SELECTORS.mediaTabButton).nth(tabIndex);
+
+  if (!(await click(tab))) {
+    logger.warn(`Media tab ${tabIndex} not found`);
+    return null;
+  }
+
+  return mediaDialog;
+}
+
+/**
+ * Sanitizes media search query
+ */
+function sanitizeMediaTitle(title: string): string {
+  return title
+    .replace("media", "")
+    .replace("meme", "")
+    .replace("gif", "")
+    .replace("sticker", "")
+    .replace("media:", "")
+    .replace("_", " ")
+    .trim();
+}
+
+/**
+ * Searches and selects a random media item
+ */
+async function searchAndSelectMedia(
+  mediaDialog: Locator,
+  searchInputSelector: string,
+  title: string,
+  maxRandomIndex: number,
+): Promise<boolean> {
+  const searchInput = mediaDialog.locator(searchInputSelector).first();
+
+  if (!(await visible(searchInput))) {
+    logger.warn(`Search input not found: ${searchInputSelector}`);
+    return false;
+  }
+
+  await searchInput.fill(sanitizeMediaTitle(title));
+  await sleep(2000);
+
+  const result = mediaDialog
+    .locator(SELECTORS.mediaItemButton)
+    .nth(Math.floor(Math.random() * maxRandomIndex));
+
+  return await click(result);
 }
 
 export async function sendSticker(
@@ -162,37 +239,18 @@ export async function sendSticker(
   try {
     const page = getPage();
     await selectToReply(chatId, targetMid);
-    const mediaButton = page.locator(SELECTORS.mediaButton).first();
 
-    if (!(await click(mediaButton))) {
-      logger.warn("Media button not found");
-      return;
-    }
+    const mediaDialog = await openMediaTab(page, 0);
+    if (!mediaDialog) return;
 
-    const mediaDialog = page.locator(SELECTORS.dialog).first();
-    const mediaTabList = mediaDialog.locator(SELECTORS.tabList).first();
-    const stickerTab = mediaTabList.locator(SELECTORS.mediaTabButton).nth(0);
+    const success = await searchAndSelectMedia(
+      mediaDialog,
+      SELECTORS.stickerSearchInput,
+      title,
+      4,
+    );
 
-    if (!(await click(stickerTab))) {
-      logger.warn("Sticker tab not found");
-      return;
-    }
-
-    const searchInput = mediaDialog
-      .locator(SELECTORS.stickerSearchInput)
-      .first();
-
-    if (!(await visible(searchInput))) {
-      logger.warn("Sticker search input not found");
-      return;
-    }
-
-    await searchInput.fill(title?.replace("media:", "").replace("_", " "));
-    const result = mediaDialog
-      .locator(SELECTORS.mediaItemButton)
-      .nth(Math.floor(Math.random() * 6));
-
-    if (await click(result)) {
+    if (success) {
       logger.info("Sticker sent", { title, reply: !!targetMid });
     } else {
       logger.warn("No sticker results found for title", { title });
@@ -204,73 +262,6 @@ export async function sendSticker(
   }
 }
 
-/**
- * Try to send a sticker matching `title`. Falls back to a GIF in the same
- * already-open media dialog if no sticker result is found.
- */
-export async function sendStickerOrGIF(
-  title: string,
-  chatId: string,
-  targetMid?: string,
-): Promise<void> {
-  try {
-    const page = getPage();
-    await selectToReply(chatId, targetMid);
-    const mediaButton = page.locator(SELECTORS.mediaButton).first();
-
-    if (!(await click(mediaButton))) {
-      logger.warn("Media button not found");
-      return;
-    }
-
-    const mediaDialog = page.locator(SELECTORS.dialog).first();
-    const mediaTabList = mediaDialog.locator(SELECTORS.tabList).first();
-    const query = title?.replace("media:", "").replace("_", " ");
-
-    // --- try sticker first ---
-    const stickerTab = mediaTabList.locator(SELECTORS.mediaTabButton).nth(0);
-    if (await click(stickerTab)) {
-      const stickerInput = mediaDialog
-        .locator(SELECTORS.stickerSearchInput)
-        .first();
-      if (await visible(stickerInput)) {
-        await stickerInput.fill(query);
-        const stickerResult = mediaDialog
-          .locator(SELECTORS.mediaItemButton)
-          .nth(Math.floor(Math.random() * 6));
-        if (await click(stickerResult)) {
-          logger.info("Sticker sent", { title, reply: !!targetMid });
-          return;
-        }
-        logger.info("No sticker results — falling back to GIF", { title });
-      }
-    }
-
-    // --- fallback: GIF (dialog is still open) ---
-    const gifTab = mediaTabList.locator(SELECTORS.mediaTabButton).nth(1);
-    if (!(await click(gifTab))) {
-      logger.warn("GIF tab not found during fallback");
-      return;
-    }
-    const gifInput = mediaDialog.locator(SELECTORS.gifSearchInput).first();
-    if (!(await visible(gifInput))) {
-      logger.warn("GIF search input not found during fallback");
-      return;
-    }
-    await gifInput.fill(query);
-    const gifResult = mediaDialog
-      .locator(SELECTORS.mediaItemButton)
-      .nth(Math.floor(Math.random() * 6));
-    if (await click(gifResult)) {
-      logger.info("GIF sent (sticker fallback)", { title, reply: !!targetMid });
-    } else {
-      logger.warn("No GIF results found either", { title });
-    }
-  } catch (err) {
-    logger.warn("sendStickerOrGIF failed", { error: (err as Error).message });
-  }
-}
-
 export async function sendGIF(
   title: string,
   chatId: string,
@@ -279,36 +270,18 @@ export async function sendGIF(
   try {
     const page = getPage();
     await selectToReply(chatId, targetMid);
-    const mediaButton = page.locator(SELECTORS.mediaButton).first();
 
-    if (!(await click(mediaButton))) {
-      logger.warn("Media button not found");
-      return;
-    }
+    const mediaDialog = await openMediaTab(page, 1);
+    if (!mediaDialog) return;
 
-    const mediaDialog = page.locator(SELECTORS.dialog).first();
-    const mediaTabList = mediaDialog.locator(SELECTORS.tabList).first();
-    const gifTab = mediaTabList.locator(SELECTORS.mediaTabButton).nth(1);
+    const success = await searchAndSelectMedia(
+      mediaDialog,
+      SELECTORS.gifSearchInput,
+      title,
+      6,
+    );
 
-    if (!(await click(gifTab))) {
-      logger.warn("GIF tab not found");
-      return;
-    }
-
-    const searchInput = mediaDialog.locator(SELECTORS.gifSearchInput).first();
-
-    if (!(await visible(searchInput))) {
-      logger.warn("GIF search input not found");
-      return;
-    }
-
-    await searchInput.fill(title?.replace("media:", "").replace("_", " "));
-
-    const result = mediaDialog
-      .locator(SELECTORS.mediaItemButton)
-      .nth(Math.floor(Math.random() * 6));
-
-    if (await click(result)) {
+    if (success) {
       logger.info("GIF sent", { title, reply: !!targetMid });
     } else {
       logger.warn("No GIF results found for title", { title });
@@ -317,6 +290,52 @@ export async function sendGIF(
     logger.warn("Send GIF failed", {
       error: (err as Error).message,
     });
+  }
+}
+
+export async function sendStickerOrGIF(
+  title: string,
+  chatId: string,
+  targetMid?: string,
+): Promise<void> {
+  try {
+    const page = getPage();
+    await selectToReply(chatId, targetMid);
+
+    // Try sticker first
+    let mediaDialog = await openMediaTab(page, 0);
+    if (!mediaDialog) return;
+
+    let success = await searchAndSelectMedia(
+      mediaDialog,
+      SELECTORS.stickerSearchInput,
+      title,
+      4,
+    );
+
+    if (success) {
+      logger.info("Sticker sent", { title, reply: !!targetMid });
+      return;
+    }
+
+    // Fallback to GIF if sticker fails
+    mediaDialog = await openMediaTab(page, 1);
+    if (!mediaDialog) return;
+
+    success = await searchAndSelectMedia(
+      mediaDialog,
+      SELECTORS.gifSearchInput,
+      title,
+      6,
+    );
+
+    if (success) {
+      logger.info("GIF sent (fallback)", { title, reply: !!targetMid });
+    } else {
+      logger.warn("No sticker or GIF results found", { title });
+    }
+  } catch (err) {
+    logger.warn("sendStickerOrGIF failed", { error: (err as Error).message });
   }
 }
 
