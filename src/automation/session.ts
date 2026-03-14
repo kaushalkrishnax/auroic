@@ -159,6 +159,28 @@ export async function ensureSession(): Promise<Page> {
   return _sessionPage!;
 }
 
+export async function handleDialogs(page: Page): Promise<void> {
+  const buttons = [
+    { name: "continue", selector: SELECTORS.continueButton },
+    { name: "save info", selector: SELECTORS.saveInfoButton },
+    { name: "not now", selector: SELECTORS.notNowButton },
+  ];
+
+  for (const btn of buttons) {
+    const locator = page.locator(btn.selector).first();
+
+    if (await locator.isVisible().catch(() => false)) {
+      try {
+        await locator.click({ timeout: 1000 });
+        logger.info(`Closed dialog: ${btn.name}`);
+        return;
+      } catch (err) {
+        logger.warn(`Failed to click dialog button: ${btn.name}`);
+      }
+    }
+  }
+}
+
 /* ------------------------------------------------ */
 /* Session init                                      */
 /* ------------------------------------------------ */
@@ -186,32 +208,9 @@ export async function initInstagramSession(): Promise<void> {
     await performLogin(page);
   }
 
-  /* Handle possible dialogs */
-
-  const dialogTimeout = 5000;
-  const start = Date.now();
-
-  while (Date.now() - start < dialogTimeout) {
-    if (await page.locator(SELECTORS.continueButton).count()) {
-      await page.click(SELECTORS.continueButton);
-      logger.info("Clicked continue button");
-      continue;
-    }
-
-    if (await page.locator(SELECTORS.saveInfoButton).count()) {
-      await page.click(SELECTORS.saveInfoButton);
-      logger.info("Clicked save info button");
-      continue;
-    }
-
-    if (await page.locator(SELECTORS.notNowButton).count()) {
-      await page.click(SELECTORS.notNowButton);
-      logger.info("Clicked not now button");
-      continue;
-    }
-
-    await page.waitForTimeout(300);
-  }
+  setInterval(() => {
+    handleDialogs(page).catch(() => {});
+  }, 2000);
 
   await page
     .waitForSelector('div[contenteditable="true"]', { timeout: 10000 })
