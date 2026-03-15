@@ -11,7 +11,7 @@
     "passiveMonitoring": {
       "enabled": true,
       "messageCount": 5,
-      "timeThresholdMs": 15000,
+      "timeThresholdMs": 5000,
       "cooldownMs": 5000
     }
   },

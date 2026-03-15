@@ -8,6 +8,7 @@ import { chromium } from "playwright";
 import type { BrowserContext, Page } from "playwright";
 import logger from "@/utils/logger.js";
 import getConfig from "@/runtime/index.js";
+import { attachDataMidsForRecentWindow } from "@/automation/chat.js";
 import SELECTORS from "@/instagram/selectors.js";
 import {
   initMailbox,
@@ -106,7 +107,10 @@ function attachPageListeners(page: Page): void {
 
       if (postData.includes("IGDThreadDetailMainViewContainerQuery")) {
         const data = await response.json();
-        initThread(data);
+        const chatId = initThread(data);
+        if (chatId) {
+          await attachDataMidsForRecentWindow(chatId, 8);
+        }
         return;
       }
     } catch (err) {

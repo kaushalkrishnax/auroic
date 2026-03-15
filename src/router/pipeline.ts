@@ -12,9 +12,13 @@
 
 import {
   getMessageByMid,
+  getLatestMessages,
 } from "@/db/queries/messages.js";
 import { insertOutgoing } from "@/db/queries/outgoing.js";
-import { getRecentDomMessages } from "@/automation/chat.js";
+import {
+  attachDataMidToDOM,
+  stampInitialDataMids,
+} from "@/automation/chat.js";
 import { initInstagramSession } from "@/automation/session.js";
 import { navigateToChat } from "@/automation/navigation.js";
 import { invokeRouter } from "@/router/router.js";
@@ -271,25 +275,46 @@ async function processPassiveBatch(chatId: string): Promise<void> {
 
     await initInstagramSession();
     await navigateToChat(chatId);
+    await stampInitialDataMids(chatId, totalWindow);
 
-    const domMessages = await getRecentDomMessages(totalWindow);
-    if (domMessages.length < CANDIDATE_SIZE) {
-      logger.warn("Not enough DOM messages for passive batch", {
+    // Build router window from DB so candidates are anchored to newly tracked
+    // passive mids, not whichever messages happen to be visible in the DOM.
+    const dbWindow = getLatestMessages(chatId, 40).filter(
+      (m) => !!(m.textContent ?? "").trim(),
+    );
+
+    if (!dbWindow.length) {
+      logger.warn("Passive batch found no text messages in DB", { chatId });
+      return;
+    }
+
+    const unprocessed = passiveState.unprocessedMids;
+    const candidateMessages = dbWindow
+      .filter((m) => unprocessed.has(m.messageId))
+      .slice(-CANDIDATE_SIZE);
+
+    if (!candidateMessages.length) {
+      logger.warn("Passive batch had no unprocessed candidates in DB window", {
         chatId,
-        count: domMessages.length,
-        required: CANDIDATE_SIZE,
+        unprocessedCount: unprocessed.size,
       });
       return;
     }
 
-    const windowMsgs = domMessages.slice(-totalWindow);
-    const candidatesWindow = windowMsgs.slice(-CANDIDATE_SIZE);
-    const historyWindow = windowMsgs
-      .slice(0, Math.max(0, windowMsgs.length - CANDIDATE_SIZE))
+    const firstCandidateIdx = dbWindow.findIndex(
+      (m) => m.messageId === candidateMessages[0]?.messageId,
+    );
+    const historyWindow = dbWindow
+      .slice(0, Math.max(0, firstCandidateIdx))
       .slice(-HISTORY_SIZE);
 
-    const modelHistory = historyWindow.map((m) => `user: ${m.text}`);
-    const candidateTexts = candidatesWindow.map((m) => m.text);
+    const modelHistory = historyWindow.map((m) => `user: ${m.textContent ?? ""}`);
+    const candidateTexts = candidateMessages.map((m) => m.textContent ?? "");
+
+    logger.info("Passive batch candidate mids", {
+      chatId,
+      mids: candidateMessages.map((m) => m.messageId),
+    });
 
     const rawDecision = await invokeRouter(modelHistory, candidateTexts);
     const decision = normalizeRouterDecision(rawDecision);
@@ -315,7 +340,7 @@ async function processPassiveBatch(chatId: string): Promise<void> {
 
     const targetIndex = resolveTargetCandidateIndex(
       decision.target,
-      candidatesWindow.length,
+      candidateMessages.length,
     );
 
     if (targetIndex === null) {
@@ -326,23 +351,26 @@ async function processPassiveBatch(chatId: string): Promise<void> {
       return;
     }
 
-    const targetCandidate = candidatesWindow[targetIndex];
-    if (!targetCandidate?.mid) {
-      logger.warn("Passive batch target missing data-mid; skipping", {
+    const targetCandidate = candidateMessages[targetIndex];
+    if (!targetCandidate) {
+      logger.warn("Passive batch target candidate unavailable; skipping", {
         chatId,
         target: decision.target,
       });
       return;
     }
 
-    const dbMessage = getMessageByMid(targetCandidate.mid);
+    const targetMid = targetCandidate.messageId;
+    const dbMessage = getMessageByMid(targetMid);
     if (!dbMessage) {
       logger.warn("Passive batch target missing in DB; skipping", {
         chatId,
-        targetMid: targetCandidate.mid,
+        targetMid,
       });
       return;
     }
+
+    await attachDataMidToDOM(chatId, targetMid);
 
     const context: ActionContext = {
       chatId,
@@ -350,8 +378,8 @@ async function processPassiveBatch(chatId: string): Promise<void> {
       history: modelHistory,
       candidates: candidateTexts,
       decision,
-      targetMessageId: targetCandidate.mid,
-      targetTextContent: targetCandidate.text,
+      targetMessageId: targetMid,
+      targetTextContent: targetCandidate.textContent ?? "",
     };
 
     let resultText: string | null = null;
@@ -360,14 +388,14 @@ async function processPassiveBatch(chatId: string): Promise<void> {
     } catch (err) {
       logger.error("Passive action execution failed", {
         chatId,
-        targetMid: targetCandidate.mid,
+        targetMid,
         error: (err as Error).message,
       });
     }
 
     insertOutgoing({
       conversationId: chatId,
-      targetMessageId: targetCandidate.mid,
+      targetMessageId: targetMid,
       actionType: decision.type,
       effortLevel: decision.effort ?? null,
       intentLabel: decision.title ?? null,
@@ -386,7 +414,7 @@ async function processPassiveBatch(chatId: string): Promise<void> {
     const conversationState = getConversationState(chatId);
     appendHistoryPair(
       conversationState,
-      targetCandidate.text,
+      targetCandidate.textContent ?? "",
       resultText ?? `[${decision.type}]`,
     );
   } finally {

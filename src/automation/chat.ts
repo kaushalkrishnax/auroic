@@ -140,6 +140,101 @@ export async function attachDataMidToDOM(
 }
 
 /**
+ * Seeds `data-mid` attributes for the newest DOM messages in a thread by
+ * matching the same-size DB tail by index (oldest->newest within the window).
+ */
+export async function attachDataMidsForRecentWindow(
+  chatId: string,
+  windowSize = 8,
+): Promise<number> {
+  const attempts = 6;
+
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const page = getPage();
+    const groups = page
+      .locator(SELECTORS.messageList)
+      .locator(SELECTORS.messageGroup);
+
+    const groupCount = await groups.count();
+    const dbMessages = getLatestMessages(chatId, windowSize);
+    const take = Math.min(windowSize, groupCount, dbMessages.length);
+
+    if (!take) {
+      await sleep(150);
+      continue;
+    }
+
+    const domStart = groupCount - take;
+    const dbSlice = dbMessages.slice(-take);
+    let stamped = 0;
+
+    for (let i = 0; i < take; i++) {
+      const mid = dbSlice[i]?.messageId;
+      if (!mid) continue;
+
+      const group = groups.nth(domStart + i);
+      const currentMid = await group.getAttribute("data-mid");
+      if (currentMid === mid) continue;
+
+      await group.evaluate((el, resolvedMid) => {
+        el.setAttribute("data-mid", resolvedMid);
+      }, mid);
+
+      stamped++;
+    }
+
+    logger.info("Initialised data-mid map for recent thread window", {
+      chatId,
+      windowSize,
+      mapped: take,
+      stamped,
+    });
+
+    return take;
+  }
+
+  logger.warn("Unable to initialise recent data-mid map", {
+    chatId,
+    windowSize,
+  });
+
+  return 0;
+}
+
+/**
+ * Bulk-stamps `data-mid` on the last `limit` DOM message groups using
+ * positional alignment against the DB message window. Call this after
+ * navigating to a chat so that pre-existing messages are labelled before
+ * any passive-monitoring snapshot is taken.
+ */
+export async function stampInitialDataMids(
+  chatId: string,
+  limit: number,
+): Promise<void> {
+  const page = getPage();
+  const messageList = page.locator(SELECTORS.messageList);
+  const allGroups = messageList.locator(SELECTORS.messageGroup);
+
+  const groupCount = await allGroups.count();
+  if (!groupCount) return;
+
+  const dbMessages = getLatestMessages(chatId, limit);
+  const take = Math.min(limit, groupCount, dbMessages.length);
+  if (!take) return;
+
+  const dbSlice = dbMessages.slice(-take);
+  const domStart = groupCount - take;
+
+  for (let i = 0; i < take; i++) {
+    const group = allGroups.nth(domStart + i);
+    const existing = await group.getAttribute("data-mid");
+    if (existing) continue;
+    const mid = dbSlice[i].messageId;
+    await group.evaluate((el, m) => el.setAttribute("data-mid", m), mid);
+  }
+}
+
+/**
  * Returns newest `limit` message groups from the currently open thread,
  * preserving oldest->newest order.
  */

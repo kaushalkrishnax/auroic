@@ -196,7 +196,7 @@ export function initMailbox(mailbox: unknown): void {
 
 // Thread seeder
 
-export function initThread(threadData: unknown): void {
+export function initThread(threadData: unknown): string | null {
   type ThreadShape = {
     data?: {
       get_slide_thread_nullable?: {
@@ -208,7 +208,7 @@ export function initThread(threadData: unknown): void {
   const data = threadData as ThreadShape;
   const thread = data?.data?.get_slide_thread_nullable?.as_ig_direct_thread;
 
-  if (!thread) return;
+  if (!thread) return null;
 
   const users = thread.users ?? [];
   const messages = thread.slide_messages?.edges ?? [];
@@ -226,6 +226,8 @@ export function initThread(threadData: unknown): void {
     messages: messages.length,
     users: users.length,
   });
+
+  return thread.thread_fbid;
 }
 
 // WebSocket frame
