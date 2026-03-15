@@ -23,7 +23,14 @@ export async function executeReact(
     return null;
   }
 
-  await addReaction(decision.title, chatId, context.targetMessageId);
+  const reacted = await addReaction(decision.title, chatId, context.targetMessageId);
+  if (!reacted) {
+    logger.warn("React action skipped: target unavailable or reaction failed", {
+      chatId,
+      targetMessageId: context.targetMessageId,
+    });
+    return null;
+  }
 
   return decision.title;
 }

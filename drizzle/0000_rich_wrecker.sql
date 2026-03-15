@@ -1,12 +1,3 @@
-CREATE TABLE `conversation_metrics` (
-	`conversation_id` text PRIMARY KEY NOT NULL,
-	`message_rate` integer,
-	`active_user_count` integer,
-	`average_message_length` integer,
-	`energy_level` text,
-	`last_updated_at` text
-);
---> statement-breakpoint
 CREATE TABLE `conversation_participants` (
 	`conversation_id` text NOT NULL,
 	`user_id` text NOT NULL,
@@ -41,19 +32,6 @@ CREATE TABLE `media` (
 );
 --> statement-breakpoint
 CREATE INDEX `idx_media_message` ON `media` (`message_id`);--> statement-breakpoint
-CREATE TABLE `memory_vectors` (
-	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
-	`conversation_id` text,
-	`user_id` text,
-	`source_message_id` text,
-	`text` text,
-	`embedding` text,
-	`embedding_model` text,
-	`decay_score` integer DEFAULT 100,
-	`last_accessed_at` text,
-	`created_at` text DEFAULT (datetime('now'))
-);
---> statement-breakpoint
 CREATE TABLE `message_features` (
 	`message_id` text PRIMARY KEY NOT NULL,
 	`is_question` integer DEFAULT false,
@@ -92,8 +70,6 @@ CREATE TABLE `messages` (
 	`is_edited` integer DEFAULT false,
 	`is_deleted` integer DEFAULT false,
 	`raw_payload` text,
-	`processed_at` text,
-	`processing_lock_at` text,
 	`created_at` text DEFAULT (datetime('now')),
 	FOREIGN KEY (`conversation_id`) REFERENCES `conversations`(`conversation_id`) ON UPDATE no action ON DELETE no action
 );
@@ -119,29 +95,6 @@ CREATE TABLE `outgoing` (
 );
 --> statement-breakpoint
 CREATE INDEX `idx_outgoing_conv` ON `outgoing` (`conversation_id`);--> statement-breakpoint
-CREATE TABLE `user_behavior` (
-	`conversation_id` text,
-	`user_id` text,
-	`message_frequency` integer,
-	`average_length` integer,
-	`emoji_usage` integer,
-	`aggression_score` integer,
-	`helpfulness_score` integer,
-	`last_updated_at` text,
-	PRIMARY KEY(`conversation_id`, `user_id`)
-);
---> statement-breakpoint
-CREATE TABLE `user_memories` (
-	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
-	`conversation_id` text,
-	`user_id` text,
-	`memory_type` text,
-	`summary` text,
-	`confidence` integer,
-	`last_referenced_at` text,
-	`created_at` text DEFAULT (datetime('now'))
-);
---> statement-breakpoint
 CREATE TABLE `users` (
 	`user_id` text PRIMARY KEY NOT NULL,
 	`platform_user_id` text,

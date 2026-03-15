@@ -41,7 +41,19 @@ export async function executeText(
       preview: replyText.slice(0, 80),
     });
 
-    await sendText(replyText, chatId, context.targetMessageId ?? undefined);
+    const sent = await sendText(
+      replyText,
+      chatId,
+      context.targetMessageId ?? undefined,
+    );
+
+    if (!sent) {
+      logger.warn("Text action skipped: target unavailable or send failed", {
+        chatId,
+        targetMessageId: context.targetMessageId,
+      });
+      return null;
+    }
 
     return replyText;
   } catch (err) {

@@ -21,7 +21,6 @@ export function formatWindow(history: string[], candidates: string[]): string {
   const h = [...history];
   while (h.length < 5) h.unshift("...");
 
-  // Align candidates to the right: 1 msg → C3, 2 msgs → C2+C3, 3 msgs → C1+C2+C3
   const c = [...candidates];
   while (c.length < 3) c.unshift("...");
 
@@ -79,7 +78,7 @@ function parseRouterOutput(output: string): RouterDecision {
           } else {
             const slotMatch = value.match(/C(\d+)/i);
             if (slotMatch) {
-              const slot = Math.min(parseInt(slotMatch[1], 10), 3);
+              const slot = parseInt(slotMatch[1], 10);
               decision.target = `C${slot}`;
             } else {
               decision.target = value;

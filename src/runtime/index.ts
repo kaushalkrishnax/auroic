@@ -142,8 +142,14 @@ interface RuntimeJson {
   triggers: {
     mentions: string[];
     hashtags: string[];
-    keywords: string[];
-    onReply: boolean;
+    keywords?: string[];
+    onReply?: boolean;
+    passiveMonitoring?: {
+      enabled: boolean;
+      messageCount: number;
+      timeWindow: number;
+      cooldownMs?: number;
+    };
   };
   llm: {
     systemPrompt: string;

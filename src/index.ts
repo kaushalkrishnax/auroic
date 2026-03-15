@@ -18,10 +18,20 @@ import {
   initInstagramSession,
   disconnectBrowser,
 } from "@/automation/session.js";
+import { attachDataMidToDOM } from "@/automation/chat.js";
 import { eventBus } from "@/events.js";
 import type { AppEvent } from "@/events.js";
 import { processMessage } from "@/router/pipeline.js";
-import { clearStaleLocks } from "@/db/queries/messages.js";
+
+interface ConversationTracker {
+  sessionStartTime: number;
+  processedThisSession: Set<string>;
+}
+
+const tracker: ConversationTracker = {
+  sessionStartTime: 0,
+  processedThisSession: new Set<string>(),
+};
 
 // Shutdown
 
@@ -48,6 +58,34 @@ function onAppEvent(event: AppEvent): void {
 
   if (event.type === "NEW_MESSAGE" || event.type === "EDIT") {
     if (event.type === "NEW_MESSAGE") {
+      if (event.timestampMs < tracker.sessionStartTime) {
+        logger.info("Skipping offline message from before session start", {
+          chatId: event.chatId,
+          mid: event.mid,
+          timestampMs: event.timestampMs,
+          sessionStartTime: tracker.sessionStartTime,
+        });
+        return;
+      }
+
+      if (tracker.processedThisSession.has(event.mid)) {
+        logger.info("Skipping already processed message in this session", {
+          chatId: event.chatId,
+          mid: event.mid,
+        });
+        return;
+      }
+
+      tracker.processedThisSession.add(event.mid);
+
+      attachDataMidToDOM(event.chatId, event.mid).catch((err) => {
+        logger.warn("Failed to stamp data-mid on DOM message", {
+          chatId: event.chatId,
+          mid: event.mid,
+          error: (err as Error).message,
+        });
+      });
+
       const config = getConfig();
       if (event.senderFbid === config.instagram.fbId) return;
     }
@@ -67,14 +105,11 @@ function onAppEvent(event: AppEvent): void {
 async function boot(): Promise<void> {
   logger.info("Starting Auroic…");
 
+  tracker.sessionStartTime = Date.now();
+  tracker.processedThisSession.clear();
+
   const config = getConfig();
   initDB(config.db.path);
-
-  // Clear any stale locks from a previous unclean shutdown
-  const cleared = clearStaleLocks(2);
-  if (cleared > 0) {
-    logger.warn("Cleared stale processing locks", { count: cleared });
-  }
 
   try {
     await initInstagramSession();

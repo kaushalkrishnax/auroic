@@ -1,61 +1,9 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "556c5045-7ce0-4007-8bde-95f8d6d48654",
+  "id": "221c2854-6457-4e71-a3f1-498c64015494",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
-    "conversation_metrics": {
-      "name": "conversation_metrics",
-      "columns": {
-        "conversation_id": {
-          "name": "conversation_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "message_rate": {
-          "name": "message_rate",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "active_user_count": {
-          "name": "active_user_count",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "average_message_length": {
-          "name": "average_message_length",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "energy_level": {
-          "name": "energy_level",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "last_updated_at": {
-          "name": "last_updated_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
     "conversation_participants": {
       "name": "conversation_participants",
       "columns": {
@@ -80,8 +28,12 @@
           "name": "conversation_participants_conversation_id_conversations_conversation_id_fk",
           "tableFrom": "conversation_participants",
           "tableTo": "conversations",
-          "columnsFrom": ["conversation_id"],
-          "columnsTo": ["conversation_id"],
+          "columnsFrom": [
+            "conversation_id"
+          ],
+          "columnsTo": [
+            "conversation_id"
+          ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -89,15 +41,22 @@
           "name": "conversation_participants_user_id_users_user_id_fk",
           "tableFrom": "conversation_participants",
           "tableTo": "users",
-          "columnsFrom": ["user_id"],
-          "columnsTo": ["user_id"],
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "user_id"
+          ],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
         "conversation_participants_conversation_id_user_id_pk": {
-          "columns": ["conversation_id", "user_id"],
+          "columns": [
+            "conversation_id",
+            "user_id"
+          ],
           "name": "conversation_participants_conversation_id_user_id_pk"
         }
       },
@@ -251,7 +210,9 @@
       "indexes": {
         "idx_media_message": {
           "name": "idx_media_message",
-          "columns": ["message_id"],
+          "columns": [
+            "message_id"
+          ],
           "isUnique": false
         }
       },
@@ -260,94 +221,16 @@
           "name": "media_message_id_messages_message_id_fk",
           "tableFrom": "media",
           "tableTo": "messages",
-          "columnsFrom": ["message_id"],
-          "columnsTo": ["message_id"],
+          "columnsFrom": [
+            "message_id"
+          ],
+          "columnsTo": [
+            "message_id"
+          ],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
       },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "memory_vectors": {
-      "name": "memory_vectors",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": true
-        },
-        "conversation_id": {
-          "name": "conversation_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "source_message_id": {
-          "name": "source_message_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "text": {
-          "name": "text",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "embedding": {
-          "name": "embedding",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "embedding_model": {
-          "name": "embedding_model",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "decay_score": {
-          "name": "decay_score",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false,
-          "default": 100
-        },
-        "last_accessed_at": {
-          "name": "last_accessed_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false,
-          "default": "(datetime('now'))"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
@@ -438,7 +321,9 @@
       "indexes": {
         "idx_features_question": {
           "name": "idx_features_question",
-          "columns": ["is_question"],
+          "columns": [
+            "is_question"
+          ],
           "isUnique": false
         }
       },
@@ -447,8 +332,12 @@
           "name": "message_features_message_id_messages_message_id_fk",
           "tableFrom": "message_features",
           "tableTo": "messages",
-          "columnsFrom": ["message_id"],
-          "columnsTo": ["message_id"],
+          "columnsFrom": [
+            "message_id"
+          ],
+          "columnsTo": [
+            "message_id"
+          ],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -510,8 +399,12 @@
           "name": "message_reactions_message_id_messages_message_id_fk",
           "tableFrom": "message_reactions",
           "tableTo": "messages",
-          "columnsFrom": ["message_id"],
-          "columnsTo": ["message_id"],
+          "columnsFrom": [
+            "message_id"
+          ],
+          "columnsTo": [
+            "message_id"
+          ],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -602,20 +495,6 @@
           "notNull": false,
           "autoincrement": false
         },
-        "processed_at": {
-          "name": "processed_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "processing_lock_at": {
-          "name": "processing_lock_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "text",
@@ -628,22 +507,31 @@
       "indexes": {
         "messages_message_id_unique": {
           "name": "messages_message_id_unique",
-          "columns": ["message_id"],
+          "columns": [
+            "message_id"
+          ],
           "isUnique": true
         },
         "idx_messages_conversation_time": {
           "name": "idx_messages_conversation_time",
-          "columns": ["conversation_id", "timestamp_ms"],
+          "columns": [
+            "conversation_id",
+            "timestamp_ms"
+          ],
           "isUnique": false
         },
         "idx_messages_user": {
           "name": "idx_messages_user",
-          "columns": ["user_id"],
+          "columns": [
+            "user_id"
+          ],
           "isUnique": false
         },
         "idx_messages_reply": {
           "name": "idx_messages_reply",
-          "columns": ["reply_to_message_id"],
+          "columns": [
+            "reply_to_message_id"
+          ],
           "isUnique": false
         }
       },
@@ -652,8 +540,12 @@
           "name": "messages_conversation_id_conversations_conversation_id_fk",
           "tableFrom": "messages",
           "tableTo": "conversations",
-          "columnsFrom": ["conversation_id"],
-          "columnsTo": ["conversation_id"],
+          "columnsFrom": [
+            "conversation_id"
+          ],
+          "columnsTo": [
+            "conversation_id"
+          ],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -761,148 +653,12 @@
       "indexes": {
         "idx_outgoing_conv": {
           "name": "idx_outgoing_conv",
-          "columns": ["conversation_id"],
+          "columns": [
+            "conversation_id"
+          ],
           "isUnique": false
         }
       },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "user_behavior": {
-      "name": "user_behavior",
-      "columns": {
-        "conversation_id": {
-          "name": "conversation_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "message_frequency": {
-          "name": "message_frequency",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "average_length": {
-          "name": "average_length",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "emoji_usage": {
-          "name": "emoji_usage",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "aggression_score": {
-          "name": "aggression_score",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "helpfulness_score": {
-          "name": "helpfulness_score",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "last_updated_at": {
-          "name": "last_updated_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "user_behavior_conversation_id_user_id_pk": {
-          "columns": ["conversation_id", "user_id"],
-          "name": "user_behavior_conversation_id_user_id_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "user_memories": {
-      "name": "user_memories",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": true
-        },
-        "conversation_id": {
-          "name": "conversation_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "memory_type": {
-          "name": "memory_type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "summary": {
-          "name": "summary",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "confidence": {
-          "name": "confidence",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "last_referenced_at": {
-          "name": "last_referenced_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false,
-          "default": "(datetime('now'))"
-        }
-      },
-      "indexes": {},
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},

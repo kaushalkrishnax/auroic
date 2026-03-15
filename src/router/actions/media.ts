@@ -16,11 +16,20 @@ export async function executeMedia(
   const query = title || "funny";
   logger.info("Action: media", { chatId: context.chatId, query });
 
-  await sendStickerOrGIF(
+  const sent = await sendStickerOrGIF(
     query,
     context.chatId,
     context.targetMessageId ?? undefined,
   );
 
-  return null;
+  if (!sent) {
+    logger.warn("Media action skipped: target unavailable or media not found", {
+      chatId: context.chatId,
+      targetMessageId: context.targetMessageId,
+      query,
+    });
+    return null;
+  }
+
+  return query;
 }

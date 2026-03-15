@@ -7,10 +7,17 @@ import type { Locator, Page } from "playwright";
 import { find } from "node-emoji";
 import { getPage } from "@/automation/session.js";
 import { getConversationById } from "@/db/queries/conversations.js";
-import { getLatestMessages } from "@/db/queries/messages.js";
+import { getLatestMessages, getMessageByMid } from "@/db/queries/messages.js";
 import SELECTORS from "@/instagram/selectors.js";
 import logger from "@/utils/logger.js";
 import { sleep } from "@/utils/delay.js";
+
+const TARGET_MAX_AGE_MS = 20_000;
+
+export interface DomMessageSnapshot {
+  mid: string | null;
+  text: string;
+}
 
 /* ------------------------------------------------ */
 /* Helper utilities                                  */
@@ -46,6 +53,14 @@ async function findMessageContainer(
   targetMid?: string,
 ): Promise<Locator | null> {
   const page = getPage();
+
+  if (targetMid) {
+    const escapedMid = targetMid.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    const byMid = page.locator(`[data-mid="${escapedMid}"]`).first();
+    if ((await byMid.count()) > 0) {
+      return byMid;
+    }
+  }
 
   const messageList = page.locator(SELECTORS.messageList);
   const allGroups = messageList.locator(SELECTORS.messageGroup);
@@ -87,6 +102,133 @@ async function findMessageContainer(
   return domGroups[index];
 }
 
+async function setDataMidOnContainer(
+  container: Locator,
+  targetMid: string,
+): Promise<void> {
+  await container.evaluate((el, mid) => {
+    el.setAttribute("data-mid", mid);
+  }, targetMid);
+}
+
+/**
+ * Stamps a stable `data-mid` attribute on the DOM message node.
+ *
+ * Resolution uses the short-window DB↔DOM index mapping as a fallback,
+ * retrying briefly because Instagram can render the node slightly after
+ * the websocket event is received.
+ */
+export async function attachDataMidToDOM(
+  chatId: string,
+  targetMid: string,
+): Promise<boolean> {
+  const attempts = 6;
+
+  for (let i = 0; i < attempts; i++) {
+    const container = await findMessageContainer(chatId, targetMid);
+    if (container) {
+      await setDataMidOnContainer(container, targetMid);
+      logger.info("Attached data-mid to DOM message", { chatId, targetMid });
+      return true;
+    }
+
+    await sleep(150);
+  }
+
+  logger.warn("Unable to attach data-mid to DOM message", { chatId, targetMid });
+  return false;
+}
+
+/**
+ * Returns newest `limit` message groups from the currently open thread,
+ * preserving oldest->newest order.
+ */
+export async function getRecentDomMessages(
+  limit: number,
+): Promise<DomMessageSnapshot[]> {
+  const page = getPage();
+  const groups = page.locator(SELECTORS.messageList).locator(SELECTORS.messageGroup);
+
+  const count = await groups.count();
+  if (!count || limit <= 0) return [];
+
+  const start = Math.max(0, count - limit);
+  const results: DomMessageSnapshot[] = [];
+
+  for (let i = start; i < count; i++) {
+    const group = groups.nth(i);
+    const mid = await group.getAttribute("data-mid");
+    const text = await group
+      .evaluate(
+        (el, textSelector) => {
+          const nodes = Array.from(el.querySelectorAll(textSelector));
+          return nodes
+            .map((n) => (n.textContent ?? "").trim())
+            .filter(Boolean)
+            .join(" ")
+            .trim();
+        },
+        SELECTORS.messageText,
+      )
+      .catch(() => "");
+
+    if (!text) continue;
+    results.push({ mid, text });
+  }
+
+  return results;
+}
+
+async function resolveTargetContainer(
+  chatId: string,
+  targetMid: string,
+): Promise<Locator | null> {
+  const firstTry = await findMessageContainer(chatId, targetMid);
+  if (firstTry) return firstTry;
+
+  const targetMessage = getMessageByMid(targetMid);
+  const ageMs = targetMessage?.timestampMs
+    ? Date.now() - Number(targetMessage.timestampMs)
+    : null;
+
+  if (ageMs !== null && ageMs > TARGET_MAX_AGE_MS) {
+    logger.warn("Skipping action: target message too old", {
+      chatId,
+      targetMid,
+      ageMs,
+      cutoffMs: TARGET_MAX_AGE_MS,
+    });
+    return null;
+  }
+
+  // Try one recovery scroll before giving up.
+  const page = getPage();
+  const messageList = page.locator(SELECTORS.messageList).first();
+  try {
+    await messageList.evaluate((el) => {
+      if (el instanceof HTMLElement) {
+        el.scrollBy(0, -300);
+      }
+    });
+  } catch {
+    await page.mouse.wheel(0, -300);
+  }
+
+  await sleep(500);
+
+  const secondTry = await findMessageContainer(chatId, targetMid);
+  if (!secondTry) {
+    logger.warn("Target permanently not found in DOM — skipping action", {
+      chatId,
+      targetMid,
+      ageMs,
+    });
+    return null;
+  }
+
+  return secondTry;
+}
+
 /* ------------------------------------------------ */
 /* Send message                                      */
 /* ------------------------------------------------ */
@@ -94,32 +236,33 @@ async function findMessageContainer(
 export async function selectToReply(
   chatId?: string,
   targetMid?: string,
-): Promise<void> {
+): Promise<boolean> {
   try {
-    if (!chatId || !targetMid) return;
+    if (!chatId || !targetMid) return true;
 
-    const page = getPage();
-
-    const msg = await findMessageContainer(chatId, targetMid);
+    const msg = await resolveTargetContainer(chatId, targetMid);
 
     if (!msg) {
       logger.warn("Target message not found", { targetMid });
-      return;
+      return false;
     }
 
-    if (!(await hover(msg))) return;
+    if (!(await hover(msg))) return false;
 
     const replyBtn = msg.locator(SELECTORS.replyButton).first();
 
     if (await click(replyBtn)) {
       logger.info("Reply mode activated", { targetMid });
+      return true;
     } else {
       logger.warn("Reply button not found", { targetMid });
+      return false;
     }
   } catch (err) {
     logger.warn("Reply setup failed", {
       error: (err as Error).message,
     });
+    return false;
   }
 }
 
@@ -127,7 +270,7 @@ export async function sendText(
   text: string,
   chatId: string,
   targetMid?: string,
-): Promise<void> {
+): Promise<boolean> {
   try {
     const page = getPage();
     const conversation = getConversationById(chatId);
@@ -139,13 +282,20 @@ export async function sendText(
           ? `${trimmedText} @BOT`
           : "@BOT";
 
-    await selectToReply(chatId, targetMid);
+    const replyReady = await selectToReply(chatId, targetMid);
+    if (targetMid && !replyReady) {
+      logger.warn("Skipping text send: reply target unavailable", {
+        chatId,
+        targetMid,
+      });
+      return false;
+    }
 
     const input = page.locator(SELECTORS.messageInput).first();
 
     if (!(await visible(input))) {
       logger.warn("Message input not found");
-      return;
+      return false;
     }
 
     await input.click();
@@ -158,10 +308,12 @@ export async function sendText(
       reply: !!targetMid,
       botTagAttached: conversation?.isGroup !== true,
     });
+    return true;
   } catch (err) {
     logger.warn("Send text failed", {
       error: (err as Error).message,
     });
+    return false;
   }
 }
 
@@ -235,13 +387,14 @@ export async function sendSticker(
   title: string,
   chatId: string,
   targetMid?: string,
-): Promise<void> {
+): Promise<boolean> {
   try {
     const page = getPage();
-    await selectToReply(chatId, targetMid);
+    const replyReady = await selectToReply(chatId, targetMid);
+    if (targetMid && !replyReady) return false;
 
     const mediaDialog = await openMediaTab(page, 0);
-    if (!mediaDialog) return;
+    if (!mediaDialog) return false;
 
     const success = await searchAndSelectMedia(
       mediaDialog,
@@ -252,13 +405,16 @@ export async function sendSticker(
 
     if (success) {
       logger.info("Sticker sent", { title, reply: !!targetMid });
+      return true;
     } else {
       logger.warn("No sticker results found for title", { title });
+      return false;
     }
   } catch (err) {
     logger.warn("Send Sticker failed", {
       error: (err as Error).message,
     });
+    return false;
   }
 }
 
@@ -266,13 +422,14 @@ export async function sendGIF(
   title: string,
   chatId: string,
   targetMid?: string,
-): Promise<void> {
+): Promise<boolean> {
   try {
     const page = getPage();
-    await selectToReply(chatId, targetMid);
+    const replyReady = await selectToReply(chatId, targetMid);
+    if (targetMid && !replyReady) return false;
 
     const mediaDialog = await openMediaTab(page, 1);
-    if (!mediaDialog) return;
+    if (!mediaDialog) return false;
 
     const success = await searchAndSelectMedia(
       mediaDialog,
@@ -283,13 +440,16 @@ export async function sendGIF(
 
     if (success) {
       logger.info("GIF sent", { title, reply: !!targetMid });
+      return true;
     } else {
       logger.warn("No GIF results found for title", { title });
+      return false;
     }
   } catch (err) {
     logger.warn("Send GIF failed", {
       error: (err as Error).message,
     });
+    return false;
   }
 }
 
@@ -297,14 +457,15 @@ export async function sendStickerOrGIF(
   title: string,
   chatId: string,
   targetMid?: string,
-): Promise<void> {
+): Promise<boolean> {
   try {
     const page = getPage();
-    await selectToReply(chatId, targetMid);
+    const replyReady = await selectToReply(chatId, targetMid);
+    if (targetMid && !replyReady) return false;
 
     // Try sticker first
     let mediaDialog = await openMediaTab(page, 0);
-    if (!mediaDialog) return;
+    if (!mediaDialog) return false;
 
     let success = await searchAndSelectMedia(
       mediaDialog,
@@ -315,12 +476,12 @@ export async function sendStickerOrGIF(
 
     if (success) {
       logger.info("Sticker sent", { title, reply: !!targetMid });
-      return;
+      return true;
     }
 
     // Fallback to GIF if sticker fails
     mediaDialog = await openMediaTab(page, 1);
-    if (!mediaDialog) return;
+    if (!mediaDialog) return false;
 
     success = await searchAndSelectMedia(
       mediaDialog,
@@ -331,11 +492,14 @@ export async function sendStickerOrGIF(
 
     if (success) {
       logger.info("GIF sent (fallback)", { title, reply: !!targetMid });
+      return true;
     } else {
       logger.warn("No sticker or GIF results found", { title });
+      return false;
     }
   } catch (err) {
     logger.warn("sendStickerOrGIF failed", { error: (err as Error).message });
+    return false;
   }
 }
 
@@ -347,23 +511,25 @@ export async function addReaction(
   reactionEmoji: string,
   chatId: string,
   targetMid?: string,
-): Promise<void> {
+): Promise<boolean> {
   try {
+    if (!chatId || !targetMid) return false;
+
     const page = getPage();
 
-    const msg = await findMessageContainer(chatId, targetMid);
+    const msg = await resolveTargetContainer(chatId, targetMid);
     if (!msg) {
       logger.warn("Target message not found", { targetMid });
-      return;
+      return false;
     }
 
-    if (!(await hover(msg))) return;
+    if (!(await hover(msg))) return false;
 
     const reactBtn = msg.locator(SELECTORS.reactButton).first();
 
     if (!(await click(reactBtn))) {
       logger.warn("React button not found", { targetMid });
-      return;
+      return false;
     }
 
     logger.info("Clicked react button", { targetMid });
@@ -374,7 +540,7 @@ export async function addReaction(
 
     if (!(await visible(quickPicker))) {
       logger.warn("Quick reaction dialog not found");
-      return;
+      return false;
     }
 
     const quickReaction = quickPicker
@@ -383,7 +549,7 @@ export async function addReaction(
 
     if (await click(quickReaction)) {
       logger.info("Selected quick emoji reaction", { reactionEmoji });
-      return;
+      return true;
     }
 
     /* OPEN FULL PICKER */
@@ -394,7 +560,7 @@ export async function addReaction(
 
     if (!(await click(chooseEmojiBtn))) {
       logger.warn("Choose emoji button not found");
-      return;
+      return false;
     }
 
     logger.info("Opened full emoji picker");
@@ -405,7 +571,7 @@ export async function addReaction(
 
     if (!(await visible(fullPicker))) {
       logger.warn("Full emoji picker not found");
-      return;
+      return false;
     }
 
     const emojiSearchInput = fullPicker
@@ -431,10 +597,15 @@ export async function addReaction(
 
     if (await click(pickerEmoji)) {
       logger.info("Selected emoji reaction via full picker", { reactionEmoji });
+      return true;
     }
+
+    logger.warn("Emoji not found in picker", { reactionEmoji });
+    return false;
   } catch (err) {
     logger.warn("Reaction failed", {
       error: (err as Error).message,
     });
+    return false;
   }
 }

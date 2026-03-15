@@ -28,8 +28,6 @@ export interface Message {
   isEdited: boolean | null;
   isDeleted: boolean | null;
   rawPayload: string | null;
-  processedAt: string | null;
-  processingLockAt: string | null;
   createdAt: string | null;
 }
 

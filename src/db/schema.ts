@@ -25,51 +25,6 @@ export const users = sqliteTable("users", {
   createdAt: text("created_at").default(sql`(datetime('now'))`),
 });
 
-// user_behavior
-
-export const userBehavior = sqliteTable(
-  "user_behavior",
-  {
-    conversationId: text("conversation_id"),
-    userId: text("user_id"),
-    messageFrequency: integer("message_frequency"),
-    averageLength: integer("average_length"),
-    emojiUsage: integer("emoji_usage"),
-    aggressionScore: integer("aggression_score"),
-    helpfulnessScore: integer("helpfulness_score"),
-    lastUpdatedAt: text("last_updated_at"),
-  },
-  (table) => [primaryKey({ columns: [table.conversationId, table.userId] })],
-);
-
-// user_memories
-
-export const userMemories = sqliteTable("user_memories", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  conversationId: text("conversation_id"),
-  userId: text("user_id"),
-  memoryType: text("memory_type"), // personality | interest | fact | relation
-  summary: text("summary"),
-  confidence: integer("confidence"),
-  lastReferencedAt: text("last_referenced_at"),
-  createdAt: text("created_at").default(sql`(datetime('now'))`),
-});
-
-// memory_vectors
-
-export const memoryVectors = sqliteTable("memory_vectors", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  conversationId: text("conversation_id"),
-  userId: text("user_id"),
-  sourceMessageId: text("source_message_id"),
-  text: text("text"),
-  embedding: text("embedding"), // stored vector
-  embeddingModel: text("embedding_model"), // bge-small | nomic-embed | e5-small
-  decayScore: integer("decay_score").default(100),
-  lastAccessedAt: text("last_accessed_at"),
-  createdAt: text("created_at").default(sql`(datetime('now'))`),
-});
-
 // conversations
 
 export const conversations = sqliteTable("conversations", {
@@ -99,17 +54,6 @@ export const conversationParticipants = sqliteTable(
   (table) => [primaryKey({ columns: [table.conversationId, table.userId] })],
 );
 
-// conversation_metrics
-
-export const conversationMetrics = sqliteTable("conversation_metrics", {
-  conversationId: text("conversation_id").primaryKey(),
-  messageRate: integer("message_rate"),
-  activeUserCount: integer("active_user_count"),
-  averageMessageLength: integer("average_message_length"),
-  energyLevel: text("energy_level"),
-  lastUpdatedAt: text("last_updated_at"),
-});
-
 // messages
 
 export const messages = sqliteTable(
@@ -128,8 +72,6 @@ export const messages = sqliteTable(
     isEdited: integer("is_edited", { mode: "boolean" }).default(false),
     isDeleted: integer("is_deleted", { mode: "boolean" }).default(false),
     rawPayload: text("raw_payload"),
-    processedAt: text("processed_at"),
-    processingLockAt: text("processing_lock_at"),
     createdAt: text("created_at").default(sql`(datetime('now'))`),
   },
   (table) => [
@@ -241,12 +183,6 @@ export type InsertOutgoing = InferInsertModel<typeof outgoing>;
 
 export type SelectMessageFeatures = InferSelectModel<typeof messageFeatures>;
 export type InsertMessageFeatures = InferInsertModel<typeof messageFeatures>;
-
-export type SelectUserMemory = InferSelectModel<typeof userMemories>;
-export type InsertUserMemory = InferInsertModel<typeof userMemories>;
-
-export type SelectMemoryVector = InferSelectModel<typeof memoryVectors>;
-export type InsertMemoryVector = InferInsertModel<typeof memoryVectors>;
 
 export type SelectConversationParticipant = InferSelectModel<
   typeof conversationParticipants
