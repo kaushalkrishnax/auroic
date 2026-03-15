@@ -10,8 +10,8 @@
     "onReply": true,
     "passiveMonitoring": {
       "enabled": true,
-      "messageCount": 10,
-      "timeWindow": 60000,
+      "messageCount": 5,
+      "timeThresholdMs": 15000,
       "cooldownMs": 5000
     }
   },
@@ -30,10 +30,8 @@
   "router": {
     "host": "http://localhost:11434",
     "model": "auroic-router-0.6b",
-    "candidateThreshold": 3,
-    "timeoutMs": 5000,
     "systemPrompt": "You are the Auroic Router. Given history messages H1-H5 and candidate messages C1-C3, output exactly one routing decision.\nAlways choose a decision for @BOT messages never ignore them.",
-    "think": false,
+    "think": true,
     "options": {
       "temperature": 0.3,
       "top_p": 1.05,

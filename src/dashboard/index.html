@@ -1355,7 +1355,8 @@
           ),
         };
         updateBadges();
-        renderView();
+        // Don't wipe the config editor on unrelated data refreshes.
+        if (state.view !== "config") renderView();
       }
 
       async function loadConfig() {
@@ -1482,10 +1483,15 @@
             break;
 
           case "CONFIG_CHANGED":
-            loadConfig().then(() => {
-              if (state.view === "config") renderView();
-            });
-            showToast("Config reloaded from file");
+            if (state.configDirty) {
+              // Don't clobber in-progress edits. Just warn.
+              showToast("Config changed on disk — you have unsaved edits");
+            } else {
+              loadConfig().then(() => {
+                if (state.view === "config") renderView();
+                showToast("Config reloaded from file");
+              });
+            }
             break;
         }
       }

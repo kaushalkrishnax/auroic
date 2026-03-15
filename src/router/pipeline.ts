@@ -41,8 +41,8 @@ interface CandidateContentResult {
 }
 
 interface PassiveMonitoringState {
-  recentMessages: Array<{ mid: string; timestamp: number }>;
-  lastCheckTime: number;
+  unprocessedMids: Set<string>;
+  flushTimer: ReturnType<typeof setTimeout> | null;
   processing: boolean;
 }
 
@@ -60,9 +60,7 @@ const BATCH_TIMEOUT_MS = 2000;
 const BATCH_HARD_LIMIT = 3;
 const MAX_MESSAGE_AGE_MS = 20_000;
 const CANDIDATE_SIZE = 3;
-const MAX_HISTORY_SIZE = 10;
-const MIN_HISTORY_SIZE = 5;
-const PASSIVE_MIN_COOLDOWN_MS = 3000;
+const HISTORY_SIZE = 5;
 
 // Trigger detection
 
@@ -146,8 +144,8 @@ function getPassiveState(chatId: string): PassiveMonitoringState {
   let state = passiveStates.get(chatId);
   if (!state) {
     state = {
-      recentMessages: [],
-      lastCheckTime: 0,
+      unprocessedMids: new Set(),
+      flushTimer: null,
       processing: false,
     };
     passiveStates.set(chatId, state);
@@ -164,36 +162,58 @@ function trackPassiveMessage(chatId: string, mid: string): void {
   if (!passive?.enabled) return;
 
   const state = getPassiveState(chatId);
-  state.recentMessages.push({ mid, timestamp: Date.now() });
-}
 
-function checkPassiveThreshold(chatId: string): boolean {
-  const passive = getPassiveMonitoringConfig();
-  if (!passive?.enabled) return false;
+  // Already tracked (duplicate event).
+  if (state.unprocessedMids.has(mid)) return;
 
-  const state = getPassiveState(chatId);
-  const now = Date.now();
-  const cooldownMs = Math.max(
-    PASSIVE_MIN_COOLDOWN_MS,
-    passive.cooldownMs ?? PASSIVE_MIN_COOLDOWN_MS,
-  );
+  state.unprocessedMids.add(mid);
 
-  state.recentMessages = state.recentMessages.filter(
-    (m) => now - m.timestamp < passive.timeWindow,
-  );
+  logger.info("Passive: tracked message", {
+    chatId,
+    mid,
+    unprocessedCount: state.unprocessedMids.size,
+    countThreshold: passive.messageCount,
+  });
 
-  const sinceLastCheck = now - state.lastCheckTime;
-  if (state.lastCheckTime > 0 && sinceLastCheck < cooldownMs) {
-    logger.info("Passive monitoring in cooldown", {
+  // Count trigger
+  if (state.unprocessedMids.size >= passive.messageCount) {
+    // Clear the time trigger — count trigger takes priority.
+    if (state.flushTimer) {
+      clearTimeout(state.flushTimer);
+      state.flushTimer = null;
+    }
+
+    logger.info("Passive: count threshold reached — flushing", {
       chatId,
-      sinceLastCheck,
-      cooldownMs,
-      bufferedMessages: state.recentMessages.length,
+      unprocessedCount: state.unprocessedMids.size,
     });
-    return false;
+
+    void processPassiveBatch(chatId);
+    return;
   }
 
-  return state.recentMessages.length >= passive.messageCount;
+  // Time trigger (start once, never reset)
+  if (!state.flushTimer) {
+    const delayMs = passive.timeThresholdMs;
+
+    logger.info("Passive: starting time trigger", {
+      chatId,
+      delayMs,
+    });
+
+    state.flushTimer = setTimeout(() => {
+      state.flushTimer = null;
+
+      if (state.unprocessedMids.size === 0) return;
+
+      logger.info("Passive: time threshold reached — flushing", {
+        chatId,
+        unprocessedCount: state.unprocessedMids.size,
+      });
+
+      void processPassiveBatch(chatId);
+    }, delayMs);
+  }
 }
 
 function getCandidateContent(msg: Message, botId: string): CandidateContentResult {
@@ -239,17 +259,12 @@ async function processPassiveBatch(chatId: string): Promise<void> {
   passiveState.processing = true;
 
   try {
-    const threshold = Math.max(CANDIDATE_SIZE, passiveConfig.messageCount);
-    const historySize = Math.min(
-      MAX_HISTORY_SIZE,
-      Math.max(MIN_HISTORY_SIZE, threshold - CANDIDATE_SIZE),
-    );
-    const totalWindow = historySize + CANDIDATE_SIZE;
+    const totalWindow = HISTORY_SIZE + CANDIDATE_SIZE; // always 8
 
     logger.info("Processing passive batch", {
       chatId,
-      threshold,
-      historySize,
+      unprocessedCount: passiveState.unprocessedMids.size,
+      historySize: HISTORY_SIZE,
       candidateSize: CANDIDATE_SIZE,
       totalWindow,
     });
@@ -271,7 +286,7 @@ async function processPassiveBatch(chatId: string): Promise<void> {
     const candidatesWindow = windowMsgs.slice(-CANDIDATE_SIZE);
     const historyWindow = windowMsgs
       .slice(0, Math.max(0, windowMsgs.length - CANDIDATE_SIZE))
-      .slice(-historySize);
+      .slice(-HISTORY_SIZE);
 
     const modelHistory = historyWindow.map((m) => `user: ${m.text}`);
     const candidateTexts = candidatesWindow.map((m) => m.text);
@@ -375,8 +390,12 @@ async function processPassiveBatch(chatId: string): Promise<void> {
       resultText ?? `[${decision.type}]`,
     );
   } finally {
-    passiveState.recentMessages = [];
-    passiveState.lastCheckTime = Date.now();
+    // Reset: clear unprocessed set and cancel any lingering timer.
+    passiveState.unprocessedMids.clear();
+    if (passiveState.flushTimer) {
+      clearTimeout(passiveState.flushTimer);
+      passiveState.flushTimer = null;
+    }
     passiveState.processing = false;
   }
 }
@@ -567,17 +586,6 @@ export async function processMessage(
 
     if (!isDirectMention) {
       trackPassiveMessage(chatId, mid);
-
-      if (!checkPassiveThreshold(chatId)) {
-        return;
-      }
-
-      logger.info("Passive monitoring threshold reached", {
-        chatId,
-        messageCount: getPassiveState(chatId).recentMessages.length,
-      });
-
-      await processPassiveBatch(chatId);
       return;
     }
 

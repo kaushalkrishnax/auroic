@@ -82,8 +82,6 @@ export function getConfig() {
     router: {
       host: runtime.router?.host ?? "http://localhost:11434",
       model: runtime.router?.model ?? "auroic-router-0.6b",
-      candidateThreshold: runtime.router?.candidateThreshold ?? 3,
-      timeoutMs: runtime.router?.timeoutMs ?? 12000,
       systemPrompt:
         runtime.router?.systemPrompt ??
         "You are the Auroic Router. Given history messages H1-H5 and candidate messages C1-C3, output exactly one routing decision.",
@@ -147,7 +145,7 @@ interface RuntimeJson {
     passiveMonitoring?: {
       enabled: boolean;
       messageCount: number;
-      timeWindow: number;
+      timeThresholdMs: number;
       cooldownMs?: number;
     };
   };
@@ -160,8 +158,6 @@ interface RuntimeJson {
   router?: {
     host: string;
     model: string;
-    candidateThreshold?: number;
-    timeoutMs?: number;
     systemPrompt?: string;
     think?: boolean;
     options?: {

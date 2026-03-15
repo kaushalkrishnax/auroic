@@ -161,8 +161,20 @@ export async function getRecentDomMessages(
     const text = await group
       .evaluate(
         (el, textSelector) => {
-          const nodes = Array.from(el.querySelectorAll(textSelector));
-          return nodes
+          const all = Array.from(el.querySelectorAll(textSelector));
+
+          const leaves = all.filter(
+            (n) => !n.querySelector(textSelector),
+          );
+
+          const cleaned = leaves.filter((n) => {
+            const t = (n.textContent ?? "").trim();
+            
+            if (/^.{0,50}\breplied to\b/i.test(t)) return false;
+            return true;
+          });
+
+          return cleaned
             .map((n) => (n.textContent ?? "").trim())
             .filter(Boolean)
             .join(" ")
@@ -299,8 +311,7 @@ export async function sendText(
     }
 
     await input.click();
-    await input.fill("");
-    await input.pressSequentially(outgoingText, { delay: 15 });
+    await input.fill(outgoingText);
     await input.press("Enter");
 
     logger.info("Text message sent", {
