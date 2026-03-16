@@ -11,7 +11,7 @@ import { executeText } from "@/router/actions/text.js";
 import { executeMedia } from "@/router/actions/media.js";
 import { executeCommand } from "@/command/command.js";
 import { navigateToChat } from "@/automation/navigation.js";
-import { initInstagramSession, getPage } from "@/automation/session.js";
+import { initInstagramSession } from "@/automation/session.js";
 
 export async function executeAction(
   context: ActionContext,
@@ -35,8 +35,7 @@ export async function executeAction(
       actionType: classifiedCommand.actionType,
     });
 
-    const page = getPage();
-    await executeCommand(classifiedCommand, page, context.chatId);
+    await executeCommand(classifiedCommand, context.chatId);
 
     // Command handlers don't return text, so return a placeholder
     return `[Command: ${classifiedCommand.commandName}]`;

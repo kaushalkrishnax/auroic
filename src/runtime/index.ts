@@ -1,32 +1,18 @@
-/**
- * Centralised runtime configuration.
- *
- * Boot-time secrets come from .env (immutable after start).
- * Hot-reloadable tunables come from runtime.json — the file is watched
- * and reloaded automatically whenever it changes on disk.
- *
- * Call getConfig() anywhere; it always reflects the latest loaded values.
- */
-
 import "dotenv/config";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
 import logger from "@/utils/logger.js";
 import { emitEvent } from "@/events.js";
-
-// Runtime JSON path
-
-const RUNTIME_PATH = path.join(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "runtime.json",
-);
-
-// Env (boot-time, immutable)
+import { initConfigDB } from "@/db/configDb.js";
+import {
+  DEFAULT_RUNTIME_SETTINGS,
+  ensureConfigSeeded,
+  getCommandConfigs,
+  getSettingsPayload,
+  type CommandConfigRow,
+  type RuntimeSettingsPayload,
+} from "@/db/queries/config.js";
 
 const env = {
-  chromiumProfileDir:
-    process.env.CHROMIUM_PROFILE_DIR ?? "./data/chrome-auroic",
+  chromiumProfileDir: process.env.CHROMIUM_PROFILE_DIR ?? "./data/chrome-auroic",
   aiUrl: process.env.AI_API_URL ?? "https://api.openai.com/v1/chat/completions",
   igChatIds: (process.env.INSTAGRAM_CHAT_IDS ?? "")
     .split(",")
@@ -36,18 +22,12 @@ const env = {
   igUsername: process.env.INSTAGRAM_USERNAME ?? "",
   igPassword: process.env.INSTAGRAM_PASSWORD ?? "",
   dbPath: process.env.DB_PATH ?? "./data/state.db",
+  configDbPath: process.env.CONFIG_DB_PATH ?? "./data/config.db",
 };
 
-// Runtime JSON
+let runtimeSettings: RuntimeSettingsPayload = DEFAULT_RUNTIME_SETTINGS;
 
-function loadRuntime(): RuntimeJson {
-  const raw = fs.readFileSync(RUNTIME_PATH, "utf-8");
-  return JSON.parse(raw) as RuntimeJson;
-}
-
-let runtime = loadRuntime();
-
-// Bot identity — auto-detected from the Instagram mailbox GraphQL response on first boot.
+let commandRows: CommandConfigRow[] = [];
 
 export let BOT_FBID: string | null = null;
 
@@ -57,144 +37,92 @@ export function setBotFbid(id: string): void {
   logger.info("Bot fbId auto-detected", { fbId: id });
 }
 
-// Config accessor
-
-export function getConfig() {
-  return {
-    chromium: {
-      profileDir: env.chromiumProfileDir,
-    },
-    instagram: {
-      fbId: BOT_FBID,
-      username: env.igUsername,
-      password: env.igPassword,
-      chatIds: env.igChatIds,
-    },
-    triggers: runtime.triggers,
-    llm: {
-      url: env.aiUrl,
-      key: env.aiKey,
-      systemPrompt: runtime.llm.systemPrompt,
-      timeout: runtime.llm.timeout,
-      models: runtime.llm.models,
-      output: runtime.llm.output,
-    },
-    router: {
-      host: runtime.router?.host ?? "http://localhost:11434",
-      model: runtime.router?.model ?? "auroic-router-0.6b",
-      systemPrompt:
-        runtime.router?.systemPrompt ??
-        "You are the Auroic Router. Given history messages H1-H5 and candidate messages C1-C3, output exactly one routing decision.",
-      think: runtime.router?.think ?? true,
-      options: {
-        temperature: runtime.router?.options?.temperature ?? 0.6,
-        top_p: runtime.router?.options?.top_p ?? 0.95,
-        top_k: runtime.router?.options?.top_k ?? 20,
-        repeat_penalty: runtime.router?.options?.repeat_penalty ?? 1.1,
-      },
-    },
-    commands: {
-      enabled: runtime.commands?.enabled ?? false,
-      similarityThreshold: runtime.commands?.similarityThreshold ?? 0.8,
-      filterWords: runtime.commands?.filterWords ?? {},
-      queryFilterWords: runtime.commands?.queryFilterWords ?? [
-        "gif",
-        "gifs",
-        "sticker",
-        "stickers",
-        "media",
-        "meme",
-        "memes",
-        "image",
-        "images",
-      ],
-    },
-    debug: {
-      logRouterWindow: runtime.debug?.logRouterWindow ?? true,
-    },
-    db: { path: env.dbPath },
-  };
+export function initRuntimeConfig(): void {
+  initConfigDB(env.configDbPath);
+  ensureConfigSeeded();
+  reloadConfig();
 }
 
-export type Config = ReturnType<typeof getConfig>;
-
-// Hot-reload
-
-export function reloadRuntime(): boolean {
+export function reloadConfig(): boolean {
   try {
-    runtime = loadRuntime();
-    logger.info("runtime.json reloaded");
+    runtimeSettings = getSettingsPayload();
+    commandRows = getCommandConfigs();
+    logger.info("Runtime config reloaded from config.db", {
+      commandCount: commandRows.length,
+    });
     emitEvent({ type: "CONFIG_CHANGED" });
     return true;
   } catch (err) {
-    logger.error("Failed to reload runtime.json — keeping previous values", {
+    logger.error("Failed to reload runtime config from config.db", {
       error: (err as Error).message,
     });
     return false;
   }
 }
 
-export function watchRuntime(): void {
-  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+export function getConfig() {
+  const llm = runtimeSettings.llm;
+  const router = runtimeSettings.router;
+  const commands = runtimeSettings.commands;
 
-  fs.watch(RUNTIME_PATH, (eventType) => {
-    if (eventType === "change") {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        logger.info("runtime.json changed — reloading…");
-        reloadRuntime();
-      }, 150);
-    }
-  });
-  logger.info("Watching runtime.json for changes", { path: RUNTIME_PATH });
+  const queryFilterWords = Array.isArray(commands.queryFilterWords)
+    ? commands.queryFilterWords.map((v) => String(v).toLowerCase())
+    : ["gif", "gifs", "sticker", "stickers", "media", "meme", "memes", "image", "images"];
+
+  return {
+    chromium: {
+      profileDir: env.chromiumProfileDir,
+    },
+    instagram: {
+      ...(runtimeSettings.instagram as Record<string, unknown>),
+      fbId: BOT_FBID,
+      username: env.igUsername,
+      password: env.igPassword,
+      chatIds: env.igChatIds,
+    },
+    triggers: runtimeSettings.triggers,
+    llm: {
+      url: env.aiUrl,
+      key: env.aiKey,
+      systemPrompt: llm.systemPrompt,
+      timeout: llm.timeout,
+      models: llm.models ?? {
+        low: "llama-3.1-8b-instant",
+        medium: "meta-llama/llama-4-scout-17b-16e-instruct",
+        high: "openai/gpt-oss-120b",
+      },
+      output: llm.output ?? { maxTokens: 100 },
+    },
+    router: {
+      host: router.host ?? "http://localhost:11434",
+      model: router.model ?? "auroic-router-0.6b",
+      systemPrompt:
+        router.systemPrompt ??
+        "You are the Auroic Router. Given history messages H1-H5 and candidate messages C1-C3, output exactly one routing decision.",
+      think: router.think ?? true,
+      options: router.options ?? {
+        temperature: 0.5,
+        top_p: 1.05,
+        top_k: 20,
+        repeat_penalty: 1.1,
+      },
+    },
+    commands: {
+      enabled: Boolean(commands.enabled ?? true),
+      queryFilterWords,
+      rows: commandRows,
+      filterWords: Object.fromEntries(
+        commandRows.map((row) => [row.command, row.filterKeywords]),
+      ),
+    },
+    debug: {
+      logRouterWindow: runtimeSettings.debug.logRouterWindow ?? true,
+    },
+    db: { path: env.dbPath },
+    configDb: { path: env.configDbPath },
+  };
 }
 
-export function getRuntimePath(): string {
-  return RUNTIME_PATH;
-}
+export type Config = ReturnType<typeof getConfig>;
 
 export default getConfig;
-
-// Runtime JSON shape
-
-interface RuntimeJson {
-  triggers: {
-    mentions: string[];
-    hashtags: string[];
-    keywords?: string[];
-    onReply?: boolean;
-    passiveMonitoring?: {
-      enabled: boolean;
-      messageCount: number;
-      timeThresholdMs: number;
-      cooldownMs?: number;
-    };
-  };
-  llm: {
-    systemPrompt: string;
-    timeout: number;
-    models: { low: string; medium: string; high: string };
-    output: { maxTokens: number };
-  };
-  router?: {
-    host: string;
-    model: string;
-    systemPrompt?: string;
-    think?: boolean;
-    options?: {
-      temperature?: number;
-      top_p?: number;
-      top_k?: number;
-      repeat_penalty?: number;
-    };
-  };
-  commands?: {
-    enabled?: boolean;
-    similarityThreshold?: number;
-    queryFilterWords?: string[];
-    filterWords?: Record<string, string[]>;
-  };
-  debug?: {
-    logRouterWindow: boolean;
-  };
-}

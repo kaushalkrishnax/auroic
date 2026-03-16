@@ -22,6 +22,8 @@ const SELECTORS = Object.freeze({
   saveInfoButton:
     'button:has-text("Save Info"), div[role="button"]:has-text("Save Info")',
 
+  voiceNoteButton:
+    'div[role="button"]:has(svg[aria-label*="Voice Clip"])',
 
   /* NAVIGATION */
 

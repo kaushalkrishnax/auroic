@@ -1,30 +1,17 @@
 import getConfig from "@/runtime/index.js";
-import { getEnabledCommandRows } from "@/db/queries/commands.js";
 import type { ActionType } from "@/types/index.js";
 import logger from "@/utils/logger.js";
 import {
   COMMAND_REGISTRY,
   getCommandHandler,
 } from "@/command/commandRegistry.js";
-import { generateTextEmbedding } from "@/command/embeddings.js";
 import type { Page } from "playwright";
-
-interface CommandEmbedding {
-  text: string;
-  embedding: number[];
-}
-
-interface CommandBucket {
-  commandName: string;
-  actionType: ActionType;
-  commandWords: Set<string>;
-  examples: CommandEmbedding[];
-}
 
 interface CommandSelection {
   commandName: string;
   actionType: ActionType;
-  commandWords: Set<string>;
+  aliases: Set<string>;
+  filterKeywords: Set<string>;
 }
 
 export interface ClassifiedCommand {
@@ -33,10 +20,6 @@ export interface ClassifiedCommand {
   query: string;
   similarity: number;
 }
-
-let commandSignature = "";
-let commandBuckets = new Map<string, CommandBucket>();
-let commandTriggerWords = new Set<string>();
 
 const registryByName = new Map(
   COMMAND_REGISTRY.map((commandDef) => [commandDef.name, commandDef]),
@@ -50,206 +33,74 @@ function asActionType(value: string): ActionType | null {
   return null;
 }
 
-function makeCommandSignature(
-  rows: ReturnType<typeof getEnabledCommandRows>,
-  filterWords: Record<string, string[]>,
-): string {
-  return (
-    rows
-      .map((row) => `${row.id}|${row.command}|${row.text}|${row.embedding}`)
-      .sort()
-      .join("||") +
-    "||fw:" +
-    JSON.stringify(filterWords)
-  );
-}
-
-function parseEmbedding(raw: string): number[] {
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((value) => Number(value))
-      .filter((value) => Number.isFinite(value));
-  } catch {
-    return [];
-  }
-}
-
-function cosineSimilarity(vecA: number[], vecB: number[]): number {
-  if (vecA.length !== vecB.length || vecA.length === 0) return 0;
-
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
-
-  for (let i = 0; i < vecA.length; i += 1) {
-    dot += vecA[i] * vecB[i];
-    normA += vecA[i] * vecA[i];
-    normB += vecB[i] * vecB[i];
-  }
-
-  if (normA === 0 || normB === 0) return 0;
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
-}
-
 function normalizeToken(token: string): string {
   return token
     .toLowerCase()
+    .replace(/^\/+/, "")
     .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
 }
 
-function getFallbackCommandCandidates(): CommandSelection[] {
-  const { filterWords } = getConfig().commands;
+function buildCandidates(): CommandSelection[] {
+  const configRows = getConfig().commands.rows;
 
-  return COMMAND_REGISTRY.map((definition) => {
-    const actionType = asActionType(definition.actionType);
-    const configuredWords = filterWords[definition.name] ?? definition.commandWords;
+  return configRows
+    .filter((row) => row.isEnabled)
+    .map((row) => {
+      const registryDef = registryByName.get(row.command);
+      const actionType = asActionType(registryDef?.actionType ?? "text") ?? "text";
 
-    return {
-      commandName: definition.name,
-      actionType: actionType ?? "text",
-      commandWords: new Set(
-        configuredWords
-          .map((word) => normalizeToken(word))
-          .filter(Boolean),
-      ),
-    };
-  });
-}
+      const aliases = new Set(
+        row.aliases.map((alias) => normalizeToken(alias)).filter(Boolean),
+      );
+      aliases.add(normalizeToken(row.command));
 
-async function refreshCommandEmbeddingsIfNeeded(): Promise<void> {
-  const { filterWords } = getConfig().commands;
-  const rows = getEnabledCommandRows();
-  const nextSignature = makeCommandSignature(rows, filterWords);
+      const filterKeywords = new Set(
+        row.filterKeywords.map((word) => normalizeToken(word)).filter(Boolean),
+      );
 
-  if (nextSignature === commandSignature) return;
-
-  const grouped = new Map<string, CommandBucket>();
-
-  for (const row of rows) {
-    const registryDef = registryByName.get(row.command);
-
-    if (!registryDef) {
-      logger.warn("Skipping command row not present in registry", {
-        id: row.id,
-        command: row.command,
-      });
-      continue;
-    }
-
-    const actionType = asActionType(registryDef.actionType);
-    if (!actionType) {
-      logger.warn("Skipping command row with unsupported action_type", {
-        id: row.id,
-        actionType: registryDef.actionType,
-      });
-      continue;
-    }
-
-    const parsedEmbedding = parseEmbedding(row.embedding);
-    if (parsedEmbedding.length === 0) {
-      logger.warn("Skipping command row with invalid embedding", {
-        id: row.id,
-        command: row.command,
-      });
-      continue;
-    }
-
-    const key = `${row.command.toLowerCase()}::${actionType}`;
-    const existing = grouped.get(key) ?? {
-      commandName: row.command,
-      actionType,
-      commandWords: new Set<string>(),
-      examples: [],
-    };
-
-    // Use runtime override if present, otherwise fall back to registry default
-    const effectiveWords = filterWords[row.command] ?? registryDef.commandWords;
-    effectiveWords
-      .map((word) => word.trim().toLowerCase())
-      .filter(Boolean)
-      .forEach((word) => existing.commandWords.add(word));
-
-    existing.examples.push({
-      text: row.text,
-      embedding: parsedEmbedding,
+      return {
+        commandName: row.command,
+        actionType,
+        aliases,
+        filterKeywords,
+      };
     });
-
-    grouped.set(key, existing);
-  }
-
-  commandBuckets = grouped;
-  commandTriggerWords = new Set<string>();
-
-  for (const candidate of getFallbackCommandCandidates()) {
-    for (const word of candidate.commandWords) {
-      if (word) commandTriggerWords.add(word);
-    }
-  }
-
-  commandSignature = nextSignature;
-
-  logger.info("Command classifier cache refreshed", {
-    commands: commandBuckets.size,
-    rows: rows.length,
-  });
 }
 
 function deriveQuery(text: string, wordsToStrip: Set<string>): string {
   const tokens = text.split(/\s+/).filter(Boolean);
 
   const kept = tokens.filter((token) => {
-    const lowerToken = token.toLowerCase();
-    const normalized = token
-      .toLowerCase()
-      .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
-
+    const normalized = normalizeToken(token);
     if (!normalized) return false;
-    if (lowerToken === "@bot" || normalized === "bot") return false;
+    if (normalized === "bot") return false;
     return !wordsToStrip.has(normalized);
   });
 
   return kept.join(" ").trim();
 }
 
-function pickKeywordFallbackCandidate(text: string): CommandSelection | null {
-  const tokens = new Set(
-    text
-      .split(/\s+/)
-      .map(normalizeToken)
-      .filter(Boolean),
-  );
-
-  let best: { candidate: CommandSelection; score: number } | null = null;
-
-  for (const candidate of getFallbackCommandCandidates()) {
-    let score = 0;
-    for (const word of candidate.commandWords) {
-      if (tokens.has(word)) score += 1;
-    }
-
-    if (score > 0 && (!best || score > best.score)) {
-      best = { candidate, score };
-    }
+function scoreCandidate(inputTokens: Set<string>, candidate: CommandSelection): number {
+  let score = 0;
+  for (const alias of candidate.aliases) {
+    if (inputTokens.has(alias)) score += 1;
   }
-
-  return best?.candidate ?? null;
+  return score;
 }
 
 export async function hasCommandTriggerKeyword(text: string): Promise<boolean> {
   const normalizedInput = text.trim();
   if (!normalizedInput) return false;
 
-  await refreshCommandEmbeddingsIfNeeded();
-  if (commandTriggerWords.size === 0) return false;
+  const tokens = new Set(
+    normalizedInput
+      .split(/\s+/)
+      .map(normalizeToken)
+      .filter(Boolean),
+  );
 
-  const tokens = normalizedInput
-    .split(/\s+/)
-    .map(normalizeToken)
-    .filter(Boolean);
-
-  return tokens.some((token) => commandTriggerWords.has(token));
+  const candidates = buildCandidates();
+  return candidates.some((candidate) => scoreCandidate(tokens, candidate) > 0);
 }
 
 export async function classifyCommand(text: string): Promise<ClassifiedCommand | null> {
@@ -259,90 +110,48 @@ export async function classifyCommand(text: string): Promise<ClassifiedCommand |
   const normalizedInput = text.trim();
   if (!normalizedInput) return null;
 
-  await refreshCommandEmbeddingsIfNeeded();
+  const tokens = new Set(
+    normalizedInput
+      .split(/\s+/)
+      .map(normalizeToken)
+      .filter(Boolean),
+  );
 
-  const threshold = config.similarityThreshold;
-  const inputEmbedding = await generateTextEmbedding(normalizedInput);
+  const candidates = buildCandidates();
 
-  let best:
-    | {
-        commandName: string;
-        actionType: ActionType;
-        similarity: number;
-        commandWords: Set<string>;
-      }
-    | null = null;
-
-  for (const bucket of commandBuckets.values()) {
-    const similarity = Math.max(
-      ...bucket.examples.map((example) =>
-        cosineSimilarity(inputEmbedding, example.embedding),
-      ),
-    );
-
-    if (!best || similarity > best.similarity) {
-      best = {
-        commandName: bucket.commandName,
-        actionType: bucket.actionType,
-        similarity,
-        commandWords: bucket.commandWords,
-      };
+  let best: { candidate: CommandSelection; score: number } | null = null;
+  for (const candidate of candidates) {
+    const score = scoreCandidate(tokens, candidate);
+    if (score > 0 && (!best || score > best.score)) {
+      best = { candidate, score };
     }
   }
 
-  let selected: {
-    commandName: string;
-    actionType: ActionType;
-    similarity: number;
-    commandWords: Set<string>;
-  } | null = best;
-
-  const fallbackCandidate = pickKeywordFallbackCandidate(normalizedInput);
-
-  if (!selected || selected.similarity < threshold) {
-    if (!fallbackCandidate) return null;
-
-    selected = {
-      commandName: fallbackCandidate.commandName,
-      actionType: fallbackCandidate.actionType,
-      similarity: selected?.similarity ?? 0,
-      commandWords: fallbackCandidate.commandWords,
-    };
-
-    logger.info("Command classifier used keyword fallback", {
-      input: normalizedInput,
-      commandName: selected.commandName,
-      similarity: selected.similarity,
-      threshold,
-    });
-  }
+  if (!best) return null;
 
   const stripWords = new Set<string>([
-    ...config.queryFilterWords.map((word) => word.toLowerCase()),
-    ...selected.commandWords,
-    ...selected.commandName
+    ...config.queryFilterWords.map((word) => normalizeToken(word)),
+    ...best.candidate.aliases,
+    ...best.candidate.filterKeywords,
+    ...best.candidate.commandName
       .toLowerCase()
       .split(/\s+/)
-      .map((word) => word.trim())
+      .map((word) => normalizeToken(word))
       .filter(Boolean),
   ]);
 
   const query = deriveQuery(normalizedInput, stripWords);
 
   return {
-    commandName: selected.commandName,
-    actionType: selected.actionType,
+    commandName: best.candidate.commandName,
+    actionType: best.candidate.actionType,
     query,
-    similarity: selected.similarity,
+    similarity: 1,
   };
 }
 
-/**
- * Execute a classified command by calling its handler function
- */
 export async function executeCommand(
   classified: ClassifiedCommand,
-  page: Page,
   conversationId: string,
 ): Promise<void> {
   const handler = getCommandHandler(classified.commandName);
@@ -363,7 +172,7 @@ export async function executeCommand(
       conversationId,
     });
 
-    await handler(page, classified.query, conversationId);
+    await handler(classified.query, conversationId);
 
     logger.info("Command executed successfully", {
       commandName: classified.commandName,
@@ -376,4 +185,3 @@ export async function executeCommand(
     });
   }
 }
-

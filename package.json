@@ -5,12 +5,14 @@
   "description": "Personal Instagram AI assistant — monitors DMs, detects triggers, replies via AI with human-like typing.",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc && tsc-alias && cp src/runtime/runtime.json dist/runtime/runtime.json && cp src/command/commands.json dist/command/commands.json && mkdir -p dist/dashboard && cp src/dashboard/index.html dist/dashboard/index.html",
+    "build": "tsc && tsc-alias && mkdir -p dist/dashboard && cp src/dashboard/index.html dist/dashboard/index.html",
     "start": "node dist/index.js",
     "dev": "tsx --watch src/index.ts",
     "check": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
+    "db:generate:config": "drizzle-kit generate --config drizzle-config.config.ts",
     "db:migrate": "drizzle-kit migrate",
+    "db:migrate:config": "drizzle-kit migrate --config drizzle-config.config.ts",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "postinstall": "npx playwright install chromium-headless-shell"

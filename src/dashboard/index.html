@@ -536,6 +536,49 @@
       resize: vertical;
     }
 
+    .kw-cell {
+      cursor: pointer;
+      min-width: 120px;
+    }
+
+    .kw-pills-wrap {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      min-height: 28px;
+      padding: 2px 4px;
+      border-radius: 6px;
+      transition: background 0.15s;
+    }
+
+    .kw-cell:hover .kw-pills-wrap {
+      background: var(--surface-2);
+    }
+
+    .kw-pill {
+      font-family: var(--mono);
+      font-size: 11px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 4px 8px;
+      color: var(--subtle);
+      white-space: nowrap;
+      background: var(--surface);
+    }
+
+    .kw-empty {
+      color: var(--muted);
+      font-size: 12px;
+      font-style: italic;
+    }
+
+    .kw-input {
+      display: none;
+      width: 100%;
+      min-width: 180px;
+    }
+
     .toggle-row {
       display: flex;
       align-items: center;
@@ -1494,9 +1537,6 @@
       outgoing: [],
       commands: [],
       commandRegistry: [],
-      selectedCommandName: null,
-      commandsSetup: { modelDirExists: false, onnxDirExists: false, onnxFiles: [], installedFiles: [], pointerFiles: [] },
-      commandsDownload: { active: false, modelFile: null, downloaded: 0, total: 0, error: null },
       config: null,
       configDirty: false,
       routerFeed: [], // live router decisions / events
@@ -1526,7 +1566,6 @@
     function setView(v) {
       state.view = v;
       state.chatDetailId = null;
-      if (v === "commands") state.selectedCommandName = null;
       state.search = "";
       document.getElementById("searchInput").value = "";
       document.querySelectorAll(".nav-item").forEach((el) => {
@@ -1584,7 +1623,7 @@
     }
 
     async function refreshAll() {
-      const [conversations, messages, users, media, reactions, outgoing, commands, commandRegistry, commandsSetup, commandsDownload, cfg] =
+      const [conversations, messages, users, media, reactions, outgoing, commands, commandRegistry, cfg] =
         await Promise.all([
           fetchJSON("/api/conversations"),
           fetchJSON("/api/messages?limit=200"),
@@ -1594,8 +1633,6 @@
           fetchJSON("/api/outgoing?limit=200"),
           fetchJSON("/api/commands"),
           fetchJSON("/api/commands/registry"),
-          fetchJSON("/api/commands/setup-status"),
-          fetchJSON("/api/commands/download-status"),
           fetchJSON("/config"),
         ]);
       if (conversations) state.conversations = conversations;
@@ -1606,8 +1643,6 @@
       if (outgoing) state.outgoing = outgoing;
       if (commands) state.commands = commands;
       if (commandRegistry) state.commandRegistry = commandRegistry;
-      if (commandsSetup) state.commandsSetup = commandsSetup;
-      if (commandsDownload) state.commandsDownload = commandsDownload;
       if (cfg && !state.configDirty) state.config = cfg;
 
       state.counts = {
@@ -1755,11 +1790,11 @@
         case "CONFIG_CHANGED":
           if (state.configDirty) {
             // Don't clobber in-progress edits. Just warn.
-            showToast("Config changed on disk — you have unsaved edits");
+            showToast("Config changed in DB — you have unsaved edits");
           } else {
             loadConfig().then(() => {
               if (state.view === "config") renderView();
-              showToast("Config reloaded from file");
+              showToast("Config reloaded from DB");
             });
           }
           break;
@@ -2432,437 +2467,139 @@
     // Commands management
 
     function renderCommandsView(el) {
-      const setup = state.commandsSetup;
-      const dl = state.commandsDownload;
-      const availableModelFiles = ["model.onnx", "model_quantized.onnx"];
-      const modelDirExists = setup.modelDirExists !== false;
-      const onnxDirExists = setup.onnxDirExists !== false;
-      const isSetupReady = modelDirExists && onnxDirExists;
-      const configEnabled = state.config?.commands?.enabled ?? false;
-      const disabledCommands = state.config?.commands?.disabledCommands ?? [];
-      const configuredModelFile = state.config?.commands?.modelFile ?? "model_quantized.onnx";
-      const currentModelFile = availableModelFiles.includes(configuredModelFile)
-        ? configuredModelFile
-        : "model_quantized.onnx";
-      const isDownloadingThis = dl.active && dl.modelFile === currentModelFile;
-      const isInstalled = (setup.installedFiles ?? []).includes(currentModelFile);
-      const isPointer = (setup.pointerFiles ?? []).includes(currentModelFile);
-      const downloadLabel = !isInstalled || isPointer ? 'Download Model' : 'Re-download Model';
-      const dlPct = dl.total ? Math.round(dl.downloaded / dl.total * 100) : 0;
-      const fmtBytes = (b) => b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : b >= 1024 ? (b / 1024).toFixed(0) + ' KB' : b + ' B';
-      const registry = state.commandRegistry || [];
+      const rows = (state.commands || []).map((row) => ({
+        command: row.command,
+        aliases: Array.isArray(row.aliases) ? row.aliases : [],
+        isEnabled: Boolean(row.isEnabled),
+        handlerName: row.handlerName || "",
+        filterKeywords: Array.isArray(row.filterKeywords) ? row.filterKeywords : [],
+      }));
 
-      const parseEmbeddingLength = (raw) => {
-        try {
-          const parsed = JSON.parse(raw || '[]');
-          return Array.isArray(parsed) ? parsed.length : 0;
-        } catch { return 0; }
-      };
+      const filteredRows = rows.filter((row) => {
+        if (!state.search) return true;
+        const hay = `${row.command} ${row.aliases.join(",")} ${row.filterKeywords.join(",")}`.toLowerCase();
+        return hay.includes(state.search.toLowerCase());
+      });
 
-      // --- EXAMPLES DRILL-DOWN VIEW ---
-      if (state.selectedCommandName) {
-        const cmdName = state.selectedCommandName;
-        const regEntry = registry.find(r => r.command === cmdName);
-        const examples = state.commands.filter(c => c.command === cmdName);
-        const filterWordsOverride = state.config?.commands?.filterWords ?? {};
-        const currentFilterWords = filterWordsOverride[cmdName] ?? regEntry?.commandWords ?? [];
-        const isFwOverridden = !!filterWordsOverride[cmdName];
-        const defaultWords = (regEntry?.commandWords || []).join(', ');
-
-        el.innerHTML = `
-          <div style="margin-bottom:20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-            <button id="cmd-back" class="btn secondary" style="flex-shrink:0">← Back</button>
-            <span style="font-family:var(--mono);font-size:15px;font-weight:600">${esc(cmdName)}</span>
-            ${regEntry ? `<span style="font-size:11px;color:var(--muted);background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:2px 8px;flex-shrink:0">${esc(regEntry.actionType)}</span>` : ''}
-            ${regEntry?.description ? `<span style="font-size:13px;color:var(--subtle)">${esc(regEntry.description)}</span>` : ''}
-          </div>
-
-          <div class="card" style="margin-bottom:20px;padding:20px">
-            <div style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px">Filter Words</div>
-            <div style="font-size:12px;color:var(--subtle);margin-bottom:10px">Words stripped from the message when deriving the search query. Leave empty to use registry defaults.${defaultWords ? ` Registry defaults: <span style="font-family:var(--mono);color:var(--muted)">${esc(defaultWords)}</span>` : ''}</div>
-            <form id="cmd-fw-form" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-              <input id="cmd-fw-input" type="text" value="${esc(currentFilterWords.join(', '))}" placeholder="comma-separated, e.g. send, gif (empty = use defaults)" style="flex:1 1 auto;min-width:180px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:8px;font-size:13px" />
-              <button class="btn" type="submit" style="flex-shrink:0;height:36px">Save</button>
-              ${isFwOverridden ? `<button class="btn secondary" type="button" id="cmd-fw-reset" style="flex-shrink:0;height:36px">Reset to defaults</button>` : ''}
-            </form>
-            <div id="cmd-fw-status" style="margin-top:8px;font-size:12px;display:none"></div>
-          </div>
-
-          <div class="card" style="margin-bottom:20px;padding:20px">
-            <div style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">Add Example</div>
-            <form id="cmd-add-example-form" style="display:flex;gap:10px;align-items:flex-start">
-              <textarea id="cmd-add-example-text" rows="2" placeholder="Type a phrase a user might send to trigger this command…" style="flex:1 1 auto;min-width:0;background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:8px;font-size:13px;resize:vertical"></textarea>
-              <button class="btn" type="submit" id="cmd-add-btn" style="flex-shrink:0;height:36px">Add Example</button>
-            </form>
-            <div id="cmd-add-status" style="margin-top:8px;font-size:12px;display:none"></div>
-          </div>
-
-          <div class="card">
-            ${examples.length === 0
-              ? '<div class="empty">No examples yet — add some above to improve command detection accuracy.</div>'
-              : `<table>
-                  <thead>
-                    <tr>
-                      <th>Example Text</th>
-                      <th>Embedding</th>
-                      <th>Created</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${examples.map(ex => `
-                      <tr>
-                        <td style="max-width:420px;word-break:break-word">${esc(ex.text)}</td>
-                        <td style="font-size:12px;color:var(--muted);white-space:nowrap">${parseEmbeddingLength(ex.embedding)} dims</td>
-                        <td style="font-size:12px;color:var(--muted);white-space:nowrap">${esc(ex.createdAt || '—')}</td>
-                        <td style="text-align:right;white-space:nowrap">
-                          <button class="btn" data-delete-id="${ex.id}" style="font-size:11px;padding:3px 9px;border-color:var(--red)">Delete</button>
-                        </td>
-                      </tr>
-                    `).join('')}
-                  </tbody>
-                </table>`
-            }
-          </div>
-        `;
-
-        el.querySelector('#cmd-back')?.addEventListener('click', () => {
-          state.selectedCommandName = null;
-          renderCommandsView(el);
-        });
-
-        // Filter words — save
-        el.querySelector('#cmd-fw-form')?.addEventListener('submit', async (e) => {
-          e.preventDefault();
-          const raw = el.querySelector('#cmd-fw-input')?.value ?? '';
-          const words = raw.split(',').map(w => w.trim().toLowerCase()).filter(Boolean);
-          const statusEl = el.querySelector('#cmd-fw-status');
-          if (statusEl) { statusEl.style.display = 'block'; statusEl.style.color = 'var(--subtle)'; statusEl.textContent = 'Saving…'; }
-          try {
-            const res = await fetch('/api/commands/filter-words', {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ commandName: cmdName, words }),
-            });
-            const payload = await res.json();
-            if (!res.ok) throw new Error(payload.error || `HTTP ${res.status}`);
-            if (!state.config) state.config = {};
-            if (!state.config.commands) state.config.commands = {};
-            const fw = { ...(state.config.commands.filterWords ?? {}) };
-            if (payload.isDefault) {
-              delete fw[cmdName];
-            } else {
-              fw[cmdName] = payload.words;
-            }
-            state.config.commands.filterWords = fw;
-            renderCommandsView(el);
-          } catch (err) {
-            if (statusEl) { statusEl.style.color = 'var(--red)'; statusEl.textContent = 'Failed: ' + err.message; }
-          }
-        });
-
-        // Filter words — reset to defaults
-        el.querySelector('#cmd-fw-reset')?.addEventListener('click', async () => {
-          const statusEl = el.querySelector('#cmd-fw-status');
-          if (statusEl) { statusEl.style.display = 'block'; statusEl.style.color = 'var(--subtle)'; statusEl.textContent = 'Resetting…'; }
-          try {
-            const res = await fetch('/api/commands/filter-words', {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ commandName: cmdName, words: [] }),
-            });
-            const payload = await res.json();
-            if (!res.ok) throw new Error(payload.error || `HTTP ${res.status}`);
-            if (!state.config) state.config = {};
-            if (!state.config.commands) state.config.commands = {};
-            const fw = { ...(state.config.commands.filterWords ?? {}) };
-            delete fw[cmdName];
-            state.config.commands.filterWords = fw;
-            renderCommandsView(el);
-          } catch (err) {
-            if (statusEl) { statusEl.style.color = 'var(--red)'; statusEl.textContent = 'Failed: ' + err.message; }
-          }
-        });
-
-        el.querySelector('#cmd-add-example-form')?.addEventListener('submit', async (e) => {
-          e.preventDefault();
-          const text = el.querySelector('#cmd-add-example-text')?.value?.trim();
-          if (!text) return;
-          const statusEl = el.querySelector('#cmd-add-status');
-          const addBtn = el.querySelector('#cmd-add-btn');
-          if (statusEl) { statusEl.style.display = 'block'; statusEl.style.color = 'var(--subtle)'; statusEl.textContent = 'Generating embedding…'; }
-          if (addBtn) addBtn.disabled = true;
-          try {
-            const res = await fetch('/api/commands', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ command: cmdName, text }),
-            });
-            const payload = await res.json();
-            if (!res.ok) throw new Error(payload.error || `HTTP ${res.status}`);
-            const rows = await fetchJSON('/api/commands');
-            if (rows) state.commands = rows;
-            renderCommandsView(el);
-          } catch (err) {
-            if (statusEl) { statusEl.style.color = 'var(--red)'; statusEl.textContent = 'Failed: ' + err.message; }
-            if (addBtn) addBtn.disabled = false;
-          }
-        });
-
-        el.querySelectorAll('[data-delete-id]').forEach(btn => {
-          btn.addEventListener('click', async () => {
-            if (!confirm('Delete this example?')) return;
-            try {
-              const res = await fetch(`/api/commands/${btn.dataset.deleteId}`, { method: 'DELETE' });
-              const payload = await res.json();
-              if (!res.ok) throw new Error(payload.error || `HTTP ${res.status}`);
-              const rows = await fetchJSON('/api/commands');
-              if (rows) state.commands = rows;
-              renderCommandsView(el);
-            } catch (err) {
-              alert('Failed to delete: ' + err.message);
-            }
-          });
-        });
-
-        return;
-      }
-
-      // --- REGISTRY LIST VIEW ---
-      const exampleCounts = {};
-      state.commands.forEach(c => { exampleCounts[c.command] = (exampleCounts[c.command] || 0) + 1; });
-
-      const filteredRegistry = registry.filter(r =>
-        !state.search ||
-        r.command.toLowerCase().includes(state.search.toLowerCase()) ||
-        r.description.toLowerCase().includes(state.search.toLowerCase())
-      );
+      const makePills = (items, prefix) =>
+        items.length === 0
+          ? `<span class="kw-empty">—</span>`
+          : items.map((v) => `<span class="kw-pill">${prefix}${esc(v)}</span>`).join("");
 
       el.innerHTML = `
-        <div style="margin-bottom:24px;display:flex;justify-content:space-between;align-items:flex-start;gap:16px">
+        <div style="margin-bottom:18px;display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
           <div>
-            <h2 style="margin:0 0 8px 0">Commands (${registry.length})</h2>
-            <p style="color:var(--subtle);margin:0">Click a command row to view and manage its training examples.</p>
+            <h2 style="margin:0 0 8px 0">Commands (${rows.length})</h2>
+            <p style="color:var(--subtle);margin:0">Edit aliases, enabled state, and filter keywords. Command and handler are read-only.</p>
           </div>
-          <label style="display:flex;align-items:center;gap:10px;cursor:pointer;flex-shrink:0;margin-top:4px">
-            <span style="font-size:13px;color:var(--subtle)">${configEnabled ? 'Enabled' : 'Disabled'}</span>
-            <div id="cmd-feature-toggle" style="width:44px;height:24px;border-radius:12px;background:${configEnabled ? 'var(--green)' : 'var(--surface-2)'};position:relative;cursor:pointer;transition:background .2s;border:1px solid var(--border);flex-shrink:0">
-              <div style="position:absolute;top:3px;left:${configEnabled ? '22px' : '3px'};width:16px;height:16px;background:#fff;border-radius:50%;transition:left .2s;pointer-events:none"></div>
-            </div>
-          </label>
+          <button class="btn" id="cmd-save">Save</button>
         </div>
-
-        <div class="card" style="margin-bottom:20px;padding:20px">
-          <div style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:14px">Model Repository</div>
-          ${!isSetupReady ? `
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-              <div style="flex:1 1 auto;min-width:0">
-                <div style="font-size:14px;margin-bottom:4px">Local model folder missing</div>
-                <div style="font-size:12px;color:var(--muted)">Expected <code style="color:var(--accent)">indic-sbert-onnx/onnx</code> in project root. This setup does not use git clone.</div>
-              </div>
-            </div>
-            ${setup.error ? `<div style="margin-top:10px;color:var(--red);font-size:12px">Error: ${esc(setup.error)}</div>` : ''}
-          ` : `
-            <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
-              <span style="font-size:13px;color:var(--green);flex-shrink:0">✔ Local model folder ready</span>
-              <div style="display:flex;align-items:center;gap:8px;flex:1 1 auto;min-width:0">
-                <span style="font-size:13px;color:var(--subtle);flex-shrink:0">Active model:</span>
-                <select id="cmd-model-select" style="background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:6px;font-size:13px;min-width:0;max-width:100%">
-                  ${availableModelFiles.map(f => `<option value="${esc(f)}"${f === currentModelFile ? " selected" : ""}>${esc(f)}</option>`).join("")}
-                </select>
-                ${isDownloadingThis ? `
-                  <div style="display:flex;align-items:center;gap:8px;flex:1 1 auto;min-width:0">
-                    <div style="flex:1 1 auto;min-width:60px;height:5px;background:var(--surface-2);border:1px solid var(--border);border-radius:99px;overflow:hidden">
-                      <div style="height:100%;background:var(--accent);width:${dlPct}%;transition:width .4s linear"></div>
-                    </div>
-                    <span style="font-size:11px;color:var(--muted);white-space:nowrap;flex-shrink:0">${fmtBytes(dl.downloaded)}${dl.total ? " / " + fmtBytes(dl.total) : ""} &nbsp;${dlPct}%</span>
-                    <button id="cmd-dl-cancel" class="btn" style="flex-shrink:0;border-color:var(--red)">Cancel</button>
-                  </div>
-                ` : dl.error && dl.modelFile === currentModelFile ? `
-                  <span style="font-size:12px;color:var(--red);flex-shrink:0">Error: ${esc(dl.error)}</span>
-                  <button id="cmd-model-download" class="btn" style="font-size:12px;padding:4px 10px;flex-shrink:0">Retry</button>
-                ` : `
-                  <button id="cmd-model-download" class="btn" style="flex-shrink:0;font-size:12px;padding:4px 10px;display:inline-flex;align-items:center;gap:5px">
-                    <svg style="width:13px;height:13px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2v13m0 0-4-4m4 4 4-4M4 20h16"/></svg>
-                    ${downloadLabel}
-                  </button>
-                `}
-              </div>
-            </div>
-          `}
-        </div>
-
         <div class="card">
-          ${filteredRegistry.length === 0 ? '<div class="empty">No commands found</div>' : `
+          ${filteredRows.length === 0 ? '<div class="empty">No commands found</div>' : `
             <table>
               <thead>
                 <tr>
                   <th>Command</th>
-                  <th>Description</th>
-                  <th style="text-align:center;white-space:nowrap">Enabled</th>
-                  <th style="text-align:center;white-space:nowrap">Examples</th>
-                  <th>Filter Words</th>
+                  <th>Aliases</th>
+                  <th style="text-align:center">Enabled</th>
+                  <th>Handler</th>
+                  <th>Filter Keywords</th>
                 </tr>
               </thead>
               <tbody>
-                ${filteredRegistry.map(reg => {
-                  const isEnabled = !disabledCommands.includes(reg.command);
-                  const count = exampleCounts[reg.command] || 0;
-                  const filterWordsOverride = state.config?.commands?.filterWords ?? {};
-                  const effectiveWords = filterWordsOverride[reg.command] ?? reg.commandWords ?? [];
-                  const words = effectiveWords.join(', ');
-                  const isOverridden = !!filterWordsOverride[reg.command];
-                  return `
-                    <tr data-cmd-name="${esc(reg.command)}" style="cursor:pointer">
-                      <td style="font-weight:500;font-family:var(--mono);font-size:13px;white-space:nowrap">${esc(reg.command)}</td>
-                      <td style="color:var(--subtle);font-size:13px">${esc(reg.description)}</td>
-                      <td style="text-align:center">
-                        <div data-cmd-toggle="${esc(reg.command)}" style="width:36px;height:20px;border-radius:10px;background:${isEnabled ? 'var(--green)' : 'var(--surface-2)'};position:relative;cursor:pointer;transition:background .15s;border:1px solid var(--border);display:inline-block;vertical-align:middle">
-                          <div style="position:absolute;top:2px;left:${isEnabled ? '17px' : '2px'};width:14px;height:14px;background:#fff;border-radius:50%;transition:left .15s;pointer-events:none"></div>
-                        </div>
-                      </td>
-                      <td style="text-align:center;font-size:13px;font-family:var(--mono);color:${count > 0 ? 'var(--text)' : 'var(--muted)'}">${count}</td>
-                      <td style="font-size:12px;color:${isOverridden ? 'var(--text)' : 'var(--muted)'};max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(words)}">${esc(words) || '—'}${isOverridden ? ' <span style="color:var(--accent);font-size:10px">✎</span>' : ''}</td>
-                    </tr>
-                  `;
-                }).join('')}
+                ${filteredRows.map((row) => `
+                  <tr data-command-row="${esc(row.command)}">
+                    <td style="font-weight:600;font-family:var(--mono);font-size:13px;white-space:nowrap">${esc(row.command)}</td>
+                    <td class="kw-cell">
+                      <div class="kw-pills-wrap">${makePills(row.aliases, "/")}</div>
+                      <input data-aliases type="text" class="field-input kw-input" value="${esc(row.aliases.join(", "))}" />
+                    </td>
+                    <td style="text-align:center">
+                      <label class="toggle">
+                        <input data-enabled type="checkbox" ${row.isEnabled ? "checked" : ""} />
+                        <span class="slider"></span>
+                      </label>
+                    </td>
+                    <td style="font-family:var(--mono);font-size:12px;color:var(--subtle);white-space:nowrap">${esc(row.handlerName)}</td>
+                    <td class="kw-cell">
+                      <div class="kw-pills-wrap">${makePills(row.filterKeywords, "")}</div>
+                      <input data-filter-keywords type="text" class="field-input kw-input" value="${esc(row.filterKeywords.join(", "))}" />
+                    </td>
+                  </tr>
+                `).join("")}
               </tbody>
             </table>
           `}
         </div>
       `;
 
-      // Global feature toggle
-      el.querySelector('#cmd-feature-toggle')?.addEventListener('click', async () => {
-        const newEnabled = !configEnabled;
-        try {
-          const res = await fetch('/api/commands/feature', {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ enabled: newEnabled }),
-          });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          if (!state.config) state.config = {};
-          if (!state.config.commands) state.config.commands = {};
-          state.config.commands.enabled = newEnabled;
-          renderCommandsView(el);
-        } catch (err) {
-          console.error('Failed to toggle commands feature:', err);
-        }
-      });
+      // Click-to-edit for kw-cells
+      el.querySelectorAll(".kw-cell").forEach((cell) => {
+        const pillsWrap = cell.querySelector(".kw-pills-wrap");
+        const input = cell.querySelector(".kw-input");
 
-      // Model selector
-      el.querySelector('#cmd-model-select')?.addEventListener('change', async (e) => {
-        const modelFile = e.target.value;
-        try {
-          const res = await fetch('/api/commands/model', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ modelFile }),
-          });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          if (state.config?.commands) state.config.commands.modelFile = modelFile;
-          renderCommandsView(el);
-        } catch (err) {
-          alert('Failed to select model: ' + err.message);
-        }
-      });
+        cell.addEventListener("click", () => {
+          if (input.style.display === "block") return;
+          pillsWrap.style.display = "none";
+          input.style.display = "block";
+          input.focus();
+        });
 
-      // Download model
-      el.querySelector('#cmd-model-download')?.addEventListener('click', async () => {
-        const modelFile = state.config?.commands?.modelFile;
-        if (!modelFile) return;
-        try {
-          const res = await fetch('/api/commands/download-model', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ modelFile }),
-          });
-          if (!res.ok) { const j = await res.json(); throw new Error(j.error ?? `HTTP ${res.status}`); }
-          state.commandsDownload = { active: true, modelFile, downloaded: 0, total: 0, error: null };
-          renderCommandsView(el);
-          startDownloadPoll(el);
-        } catch (err) {
-          alert('Download failed: ' + err.message);
-        }
-      });
+        const commitEdit = () => {
+          const isAliases = input.hasAttribute("data-aliases");
+          const prefix = isAliases ? "/" : "";
+          const vals = input.value.split(",").map((v) => v.trim().toLowerCase()).filter(Boolean);
+          pillsWrap.innerHTML = makePills(vals, prefix);
+          input.style.display = "none";
+          pillsWrap.style.display = "";
+        };
 
-      // Cancel download
-      el.querySelector('#cmd-dl-cancel')?.addEventListener('click', async () => {
-        try {
-          await fetch('/api/commands/download-cancel', { method: 'POST' });
-          state.commandsDownload = { active: false, modelFile: null, downloaded: 0, total: 0, error: null };
-          renderCommandsView(el);
-        } catch (err) {
-          alert('Cancel failed: ' + err.message);
-        }
-      });
-
-      // Per-command enabled toggle (stop propagation so row click doesn't also fire)
-      el.querySelectorAll('[data-cmd-toggle]').forEach(toggleEl => {
-        toggleEl.addEventListener('click', async (e) => {
-          e.stopPropagation();
-          const cmdName = toggleEl.dataset.cmdToggle;
-          try {
-            const res = await fetch('/api/commands/toggle', {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ commandName: cmdName }),
-            });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const payload = await res.json();
-            if (!state.config) state.config = {};
-            if (!state.config.commands) state.config.commands = {};
-            const disabled = state.config.commands.disabledCommands ?? [];
-            state.config.commands.disabledCommands = payload.enabled
-              ? disabled.filter(n => n !== cmdName)
-              : [...disabled, cmdName];
-            renderCommandsView(el);
-          } catch (err) {
-            alert('Failed to toggle command: ' + err.message);
-          }
+        input.addEventListener("blur", commitEdit);
+        input.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" || e.key === "Escape") input.blur();
         });
       });
 
-      // Row click → open examples drill-down
-      el.querySelectorAll('[data-cmd-name]').forEach(rowEl => {
-        rowEl.addEventListener('click', () => {
-          state.selectedCommandName = rowEl.dataset.cmdName;
-          renderCommandsView(el);
+      el.querySelector("#cmd-save")?.addEventListener("click", async () => {
+        const payloadRows = [...el.querySelectorAll("[data-command-row]")].map((rowEl) => {
+          const command = rowEl.dataset.commandRow;
+          const aliasesInput = rowEl.querySelector("[data-aliases]");
+          const enabledInput = rowEl.querySelector("[data-enabled]");
+          const filterKeywordsInput = rowEl.querySelector("[data-filter-keywords]");
+
+          const existing = rows.find((row) => row.command === command);
+
+          return {
+            command,
+            aliases: (aliasesInput?.value || "")
+              .split(",")
+              .map((v) => v.trim().toLowerCase())
+              .filter(Boolean),
+            isEnabled: Boolean(enabledInput?.checked),
+            handlerName: existing?.handlerName || "",
+            filterKeywords: (filterKeywordsInput?.value || "")
+              .split(",")
+              .map((v) => v.trim().toLowerCase())
+              .filter(Boolean),
+          };
         });
+
+        try {
+          const res = await fetch("/api/commands/save", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ commands: payloadRows }),
+          });
+          const payload = await res.json();
+          if (!res.ok) throw new Error(payload.error || `HTTP ${res.status}`);
+          const latest = await fetchJSON("/api/commands");
+          if (latest) state.commands = latest;
+          showToast("Commands saved");
+          renderCommandsView(el);
+        } catch (err) {
+          showToast("Save failed: " + err.message);
+        }
       });
-
-      // Auto-poll while downloading
-      if (dl.active && !commandsDownloadPollTimer) startDownloadPoll(el);
-    }
-
-    let commandsDownloadPollTimer = null;
-
-    function startDownloadPoll(el) {
-      if (commandsDownloadPollTimer) return;
-      commandsDownloadPollTimer = setInterval(async () => {
-        const status = await fetchJSON('/api/commands/download-status');
-        if (!status) return;
-        state.commandsDownload = status;
-        if (state.view === 'commands') {
-          renderCommandsView(el || document.getElementById('main-content'));
-        }
-        if (!status.active) {
-          clearInterval(commandsDownloadPollTimer);
-          commandsDownloadPollTimer = null;
-          if (!status.error) {
-            // Refresh setup status so pointerFiles is updated
-            const setup = await fetchJSON('/api/commands/setup-status');
-            if (setup) {
-              state.commandsSetup = setup;
-              if (state.view === 'commands') {
-                renderCommandsView(el || document.getElementById('main-content'));
-              }
-            }
-          }
-          state.commandsDownload = { active: false, modelFile: null, downloaded: 0, total: 0, error: null };
-        }
-      }, 500);
     }
 
     // Config editor
@@ -2882,7 +2619,7 @@
 
       el.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-      <div style="font-size:13px;color:var(--subtle)">Edit <code style="color:var(--accent)">runtime.json</code> — changes save instantly on write</div>
+      <div style="font-size:13px;color:var(--subtle)">Edit <code style="color:var(--accent)">config.db/settings</code> — changes apply after save</div>
       <div style="display:flex;gap:8px">
         <button class="btn secondary" onclick="loadConfig().then(()=>renderView())">↻ Reload</button>
         <button class="btn" onclick="saveConfig()">Save</button>

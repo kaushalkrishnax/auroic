@@ -618,6 +618,39 @@ export async function sendStickerOrGIF(
   }
 }
 
+// export async function sendVoiceNote(
+//   title: string,
+//   chatId: string,
+//   targetMid?: string,
+// ): Promise<boolean> {
+//   try {
+//     const page = getPage();
+//     const replyReady = await selectToReply(chatId, targetMid);
+//     if (targetMid && !replyReady) return false;
+
+//     const voiceBtn = page.locator(SELECTORS.voiceNoteButton).first();
+
+//     if (!(await click(voiceBtn))) {
+//       logger.warn("Voice note button not found");
+//       return false;
+//     }
+
+
+//     if (await click(result)) {
+//       logger.info("Voice note sent", { title, reply: !!targetMid });
+//       return true;
+//     } else {
+//       logger.warn("No voice note results found for title", { title });
+//       return false;
+//     }
+//   } catch (err) {
+//     logger.warn("Send voice note failed", {
+//       error: (err as Error).message,
+//     });
+//     return false;
+//   }
+// }
+
 /* ------------------------------------------------ */
 /* Add reaction                                      */
 /* ------------------------------------------------ */

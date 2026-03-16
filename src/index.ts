@@ -10,10 +10,11 @@
  *   - Dispatches each to the processing pipeline
  */
 
-import getConfig, { watchRuntime } from "@/runtime/index.js";
+import getConfig, { initRuntimeConfig } from "@/runtime/index.js";
 import { startServer } from "@/api/server.js";
 import logger from "@/utils/logger.js";
 import { initDB, closeDB } from "@/db/index.js";
+import { closeConfigDB } from "@/db/configDb.js";
 import {
   initInstagramSession,
   disconnectBrowser,
@@ -44,6 +45,7 @@ function registerShutdown(): void {
     logger.info(`Received ${signal} — shutting down gracefully…`);
     await disconnectBrowser();
     closeDB();
+    closeConfigDB();
     process.exit(0);
   };
 
@@ -129,7 +131,7 @@ async function boot(): Promise<void> {
 // Entry
 
 registerShutdown();
-watchRuntime();
+initRuntimeConfig();
 startServer();
 
 boot().catch((err) => {
