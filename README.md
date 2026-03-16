@@ -117,6 +117,29 @@ DOM operations (reactions, reply-select, message send) use **index-based alignme
 | Ollama      | Latest (for local router model) |
 | Docker      | ≥ 24 _(optional)_               |
 
+### Setup Ollama
+
+Ollama runs the local router model. Install it first:
+
+```bash
+# macOS / Linux (via brew)
+brew install ollama
+
+# Linux (direct)
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# Then start the Ollama service
+ollama serve
+```
+
+Once Ollama is running in the background, in a new terminal pull the router model:
+
+```bash
+ollama run hf.co/kaushalkrishnax/auroic-router-0.6b
+```
+
+This downloads the **auroic-router-0.6b** model (a custom fine-tuned 600M parameter model) and verifies it loads. The model will be cached locally for all subsequent runs. Leave Ollama running in the background — the bot will connect to it on `localhost:11434` during operation.
+
 ### Configuration
 
 ```bash
