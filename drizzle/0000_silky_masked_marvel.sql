@@ -1,3 +1,13 @@
+CREATE TABLE `commands` (
+	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`command` text NOT NULL,
+	`text` text NOT NULL,
+	`embedding` text DEFAULT '[]' NOT NULL,
+	`created_at` text DEFAULT (datetime('now'))
+);
+--> statement-breakpoint
+CREATE INDEX `idx_commands_command` ON `commands` (`command`);--> statement-breakpoint
+CREATE INDEX `idx_commands_created_at` ON `commands` (`created_at`);--> statement-breakpoint
 CREATE TABLE `conversation_participants` (
 	`conversation_id` text NOT NULL,
 	`user_id` text NOT NULL,

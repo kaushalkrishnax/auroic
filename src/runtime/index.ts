@@ -93,6 +93,22 @@ export function getConfig() {
         repeat_penalty: runtime.router?.options?.repeat_penalty ?? 1.1,
       },
     },
+    commands: {
+      enabled: runtime.commands?.enabled ?? false,
+      similarityThreshold: runtime.commands?.similarityThreshold ?? 0.8,
+      filterWords: runtime.commands?.filterWords ?? {},
+      queryFilterWords: runtime.commands?.queryFilterWords ?? [
+        "gif",
+        "gifs",
+        "sticker",
+        "stickers",
+        "media",
+        "meme",
+        "memes",
+        "image",
+        "images",
+      ],
+    },
     debug: {
       logRouterWindow: runtime.debug?.logRouterWindow ?? true,
     },
@@ -119,10 +135,15 @@ export function reloadRuntime(): boolean {
 }
 
 export function watchRuntime(): void {
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
   fs.watch(RUNTIME_PATH, (eventType) => {
     if (eventType === "change") {
-      logger.info("runtime.json changed — reloading…");
-      reloadRuntime();
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        logger.info("runtime.json changed — reloading…");
+        reloadRuntime();
+      }, 150);
     }
   });
   logger.info("Watching runtime.json for changes", { path: RUNTIME_PATH });
@@ -166,6 +187,12 @@ interface RuntimeJson {
       top_k?: number;
       repeat_penalty?: number;
     };
+  };
+  commands?: {
+    enabled?: boolean;
+    similarityThreshold?: number;
+    queryFilterWords?: string[];
+    filterWords?: Record<string, string[]>;
   };
   debug?: {
     logRouterWindow: boolean;

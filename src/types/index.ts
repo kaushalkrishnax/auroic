@@ -40,6 +40,13 @@ export interface ActionContext {
   decision: RouterDecision;
   targetMessageId: string | null;
   targetTextContent: string | null;
+  /** Classified command if matched by command classifier */
+  classifiedCommand?: {
+    commandName: string;
+    actionType: ActionType;
+    query: string;
+    similarity: number;
+  };
 }
 
 /** Raw Instagram user shape from GraphQL responses */

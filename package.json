@@ -5,7 +5,7 @@
   "description": "Personal Instagram AI assistant — monitors DMs, detects triggers, replies via AI with human-like typing.",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc && tsc-alias && cp src/runtime/runtime.json dist/runtime/runtime.json && mkdir -p dist/dashboard && cp src/dashboard/index.html dist/dashboard/index.html",
+    "build": "tsc && tsc-alias && cp src/runtime/runtime.json dist/runtime/runtime.json && mkdir -p dist/dashboard && cp src/dashboard/index.html dist/dashboard/index.html && mkdir -p dist/router && cp src/router/commands.json dist/router/commands.json",
     "start": "node dist/index.js",
     "dev": "tsx --watch src/index.ts",
     "check": "tsc --noEmit",
@@ -25,6 +25,7 @@
   "license": "MIT",
   "dependencies": {
     "@hono/node-server": "^1.19.11",
+    "@huggingface/transformers": "^3.8.1",
     "better-sqlite3": "^11.10.0",
     "dotenv": "^16.6.1",
     "drizzle-orm": "^0.45.1",

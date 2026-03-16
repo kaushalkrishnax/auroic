@@ -22,6 +22,11 @@ import {
 import { initInstagramSession } from "@/automation/session.js";
 import { navigateToChat } from "@/automation/navigation.js";
 import { invokeRouter } from "@/router/router.js";
+import {
+  classifyCommand,
+  hasCommandTriggerKeyword,
+  type ClassifiedCommand,
+} from "@/command/command.js";
 import { executeAction } from "@/router/dispatcher.js";
 import { emitEvent } from "@/events.js";
 import logger from "@/utils/logger.js";
@@ -254,6 +259,30 @@ function resolveTargetCandidateIndex(
   return idx;
 }
 
+function buildRouterCandidateSlots(candidateTexts: string[]): {
+  routerCandidates: string[];
+  slotToCandidateIndex: Array<number | null>;
+} {
+  const maxSlots = CANDIDATE_SIZE;
+  const candidates = candidateTexts.slice(-maxSlots);
+  const leadingPlaceholders = Math.max(0, maxSlots - candidates.length);
+
+  const routerCandidates = [
+    ...Array(leadingPlaceholders).fill("..."),
+    ...candidates,
+  ];
+
+  const slotToCandidateIndex: Array<number | null> = [
+    ...Array(leadingPlaceholders).fill(null),
+    ...candidates.map((_, idx) => idx),
+  ];
+
+  return {
+    routerCandidates,
+    slotToCandidateIndex,
+  };
+}
+
 async function processPassiveBatch(chatId: string): Promise<void> {
   const passiveConfig = getPassiveMonitoringConfig();
   if (!passiveConfig?.enabled) return;
@@ -310,14 +339,64 @@ async function processPassiveBatch(chatId: string): Promise<void> {
 
     const modelHistory = historyWindow.map((m) => `user: ${m.textContent ?? ""}`);
     const candidateTexts = candidateMessages.map((m) => m.textContent ?? "");
+    const { routerCandidates, slotToCandidateIndex } =
+      buildRouterCandidateSlots(candidateTexts);
 
     logger.info("Passive batch candidate mids", {
       chatId,
       mids: candidateMessages.map((m) => m.messageId),
     });
 
-    const rawDecision = await invokeRouter(modelHistory, candidateTexts);
-    const decision = normalizeRouterDecision(rawDecision);
+    let decision: RouterDecision;
+    let classifiedCommand: ClassifiedCommand | null = null;
+    let commandCandidateIndex: number | null = null;
+
+    for (let i = candidateMessages.length - 1; i >= 0; i -= 1) {
+      const messageText = candidateTexts[i] ?? "";
+      if (!(await hasCommandTriggerKeyword(messageText))) continue;
+
+      try {
+        const classified = await classifyCommand(messageText);
+        if (!classified) continue;
+
+        classifiedCommand = classified;
+        commandCandidateIndex = i;
+        break;
+      } catch (cmdErr) {
+        logger.warn("Passive command classifier failed, falling back to router", {
+          chatId,
+          mid: candidateMessages[i]?.messageId,
+          error: (cmdErr as Error).message,
+        });
+      }
+    }
+
+    if (classifiedCommand && commandCandidateIndex !== null) {
+      const firstRealSlot = CANDIDATE_SIZE - candidateMessages.length;
+      const targetSlot = firstRealSlot + commandCandidateIndex + 1;
+      const title = classifiedCommand.query || classifiedCommand.commandName;
+
+      decision = {
+        type: classifiedCommand.actionType,
+        target: `C${targetSlot}`,
+        effort: classifiedCommand.actionType === "text" ? "medium" : null,
+        title,
+        reason: `Passive command classifier (${classifiedCommand.commandName}) score=${classifiedCommand.similarity.toFixed(3)}`,
+      };
+
+      logger.info("Passive command classifier matched", {
+        chatId,
+        mid: candidateMessages[commandCandidateIndex]?.messageId,
+        commandName: classifiedCommand.commandName,
+        actionType: classifiedCommand.actionType,
+        similarity: classifiedCommand.similarity,
+        query: classifiedCommand.query,
+        target: decision.target,
+      });
+    } else {
+      const rawDecision = await invokeRouter(modelHistory, routerCandidates);
+      decision = normalizeRouterDecision(rawDecision);
+    }
 
     logger.info("Passive monitoring router decision", {
       chatId,
@@ -340,7 +419,7 @@ async function processPassiveBatch(chatId: string): Promise<void> {
 
     const targetIndex = resolveTargetCandidateIndex(
       decision.target,
-      candidateMessages.length,
+      CANDIDATE_SIZE,
     );
 
     if (targetIndex === null) {
@@ -351,7 +430,18 @@ async function processPassiveBatch(chatId: string): Promise<void> {
       return;
     }
 
-    const targetCandidate = candidateMessages[targetIndex];
+    const mappedCandidateIndex =
+      targetIndex === null ? null : slotToCandidateIndex[targetIndex];
+
+    if (mappedCandidateIndex === null || mappedCandidateIndex === undefined) {
+      logger.warn("Passive batch target resolved to placeholder slot; skipping", {
+        chatId,
+        target: decision.target,
+      });
+      return;
+    }
+
+    const targetCandidate = candidateMessages[mappedCandidateIndex];
     if (!targetCandidate) {
       logger.warn("Passive batch target candidate unavailable; skipping", {
         chatId,
@@ -380,6 +470,7 @@ async function processPassiveBatch(chatId: string): Promise<void> {
       decision,
       targetMessageId: targetMid,
       targetTextContent: targetCandidate.textContent ?? "",
+      classifiedCommand: classifiedCommand ?? undefined,
     };
 
     let resultText: string | null = null;
@@ -492,8 +583,46 @@ async function processCandidates(chatId: string): Promise<void> {
     const modelHistory = getHistoryForModels(state.history);
 
     try {
-      const rawDecision = await invokeRouter(modelHistory, [candidate.content]);
-      const decision = normalizeRouterDecision(rawDecision);
+      let decision: RouterDecision;
+      let classifiedCommand = null;
+
+      const hasCommandTrigger = await hasCommandTriggerKeyword(candidate.content);
+
+      // Run embedding classifier first when command trigger words are present.
+      if (hasCommandTrigger) {
+        try {
+          classifiedCommand = await classifyCommand(candidate.content);
+        } catch (cmdErr) {
+          logger.warn("Command classifier failed, falling back to router", {
+            chatId,
+            mid: msg.messageId,
+            error: (cmdErr as Error).message,
+          });
+        }
+      }
+
+      if (classifiedCommand) {
+        const title = classifiedCommand.query || classifiedCommand.commandName;
+        decision = {
+          type: classifiedCommand.actionType,
+          target: "C1",
+          effort: classifiedCommand.actionType === "text" ? "medium" : null,
+          title,
+          reason: `Command classifier (${classifiedCommand.commandName}) score=${classifiedCommand.similarity.toFixed(3)}`,
+        };
+
+        logger.info("Command classifier matched", {
+          chatId,
+          mid: msg.messageId,
+          commandName: classifiedCommand.commandName,
+          actionType: classifiedCommand.actionType,
+          similarity: classifiedCommand.similarity,
+          query: classifiedCommand.query,
+        });
+      } else {
+        const rawDecision = await invokeRouter(modelHistory, [candidate.content]);
+        decision = normalizeRouterDecision(rawDecision);
+      }
 
       logger.info("Router decision", {
         chatId,
@@ -527,6 +656,7 @@ async function processCandidates(chatId: string): Promise<void> {
         decision,
         targetMessageId: msg.messageId,
         targetTextContent: msg.textContent,
+        classifiedCommand: classifiedCommand || undefined,
       };
 
       let resultText: string | null = null;

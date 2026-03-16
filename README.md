@@ -125,6 +125,8 @@ cp .env.example .env
 
 Edit `.env` for secrets and chat IDs (`INSTAGRAM_CHAT_IDS=id1,id2,id3`), and `src/runtime/runtime.json` for triggers, models, and prompts. See `.env.example` for all available variables.
 
+The command-classifier model is loaded from the local `indic-sbert-onnx/` folder in project root. No `git clone` step is required.
+
 ### Run
 
 ```bash

@@ -10,8 +10,8 @@
     "onReply": true,
     "passiveMonitoring": {
       "enabled": true,
-      "messageCount": 5,
-      "timeThresholdMs": 5000,
+      "messageCount": 10,
+      "timeThresholdMs": 10000,
       "cooldownMs": 5000
     }
   },
@@ -33,7 +33,7 @@
     "systemPrompt": "You are the Auroic Router. Given history messages H1-H5 and candidate messages C1-C3, output exactly one routing decision.\nAlways choose a decision for @BOT messages never ignore them.",
     "think": true,
     "options": {
-      "temperature": 0.3,
+      "temperature": 0.5,
       "top_p": 1.05,
       "top_k": 20,
       "repeat_penalty": 1.1
@@ -44,5 +44,10 @@
   },
   "instagram": {
     "fbId": "17850624534657526"
+  },
+  "commands": {
+    "enabled": true,
+    "similarityThreshold": 0.8,
+    "modelFile": "model_quantized.onnx"
   }
 }

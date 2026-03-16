@@ -173,12 +173,17 @@ export async function attachDataMidsForRecentWindow(
       if (!mid) continue;
 
       const group = groups.nth(domStart + i);
-      const currentMid = await group.getAttribute("data-mid");
-      if (currentMid === mid) continue;
+      try {
+        const currentMid = await group.getAttribute("data-mid", { timeout: 5000 });
+        if (currentMid === mid) continue;
 
-      await group.evaluate((el, resolvedMid) => {
-        el.setAttribute("data-mid", resolvedMid);
-      }, mid);
+        await group.evaluate((el, resolvedMid) => {
+          el.setAttribute("data-mid", resolvedMid);
+        }, mid, { timeout: 5000 });
+      } catch {
+        // DOM changed during iteration — break to retry on next attempt
+        break;
+      }
 
       stamped++;
     }
@@ -227,10 +232,14 @@ export async function stampInitialDataMids(
 
   for (let i = 0; i < take; i++) {
     const group = allGroups.nth(domStart + i);
-    const existing = await group.getAttribute("data-mid");
-    if (existing) continue;
-    const mid = dbSlice[i].messageId;
-    await group.evaluate((el, m) => el.setAttribute("data-mid", m), mid);
+    try {
+      const existing = await group.getAttribute("data-mid", { timeout: 5000 });
+      if (existing) continue;
+      const mid = dbSlice[i].messageId;
+      await group.evaluate((el, m) => el.setAttribute("data-mid", m), mid, { timeout: 5000 });
+    } catch {
+      // DOM changed, skip this element
+    }
   }
 }
 
@@ -252,7 +261,7 @@ export async function getRecentDomMessages(
 
   for (let i = start; i < count; i++) {
     const group = groups.nth(i);
-    const mid = await group.getAttribute("data-mid");
+    const mid = await group.getAttribute("data-mid", { timeout: 5000 }).catch(() => null);
     const text = await group
       .evaluate(
         (el, textSelector) => {
