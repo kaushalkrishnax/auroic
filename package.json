@@ -1,8 +1,8 @@
 {
-  "name": "auroic-instagram-assistant",
-  "version": "1.0.0-beta",
+  "name": "auroic",
+  "version": "1.0.0",
   "type": "module",
-  "description": "Personal Instagram AI assistant — monitors DMs, detects triggers, replies via AI with human-like typing.",
+  "description": "Conversational AI agent for chat automation with multi-message intent detection, passive monitoring, human-like auto-replies, command execution, and media automation.",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc && tsc-alias && mkdir -p dist/dashboard && cp src/dashboard/index.html dist/dashboard/index.html",
@@ -27,7 +27,6 @@
   "license": "MIT",
   "dependencies": {
     "@hono/node-server": "^1.19.11",
-    "@huggingface/transformers": "^3.8.1",
     "better-sqlite3": "^11.10.0",
     "dotenv": "^16.6.1",
     "drizzle-orm": "^0.45.1",
