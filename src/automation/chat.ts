@@ -647,20 +647,22 @@ export async function playMusic(
       0,
     );
 
-    const musicSendBtn = mediaDialog.locator(SELECTORS.musicSendButton).first();
-
-    if (!(await click(musicSendBtn))) {
-      logger.warn("Music send button not found");
-      return false;
-    }
-
     if (success) {
-      logger.info("Music sent", { title });
-      return true;
+      const musicSendBtn = mediaDialog
+        .locator(SELECTORS.musicSendButton)
+        .first();
+
+      if (!(await click(musicSendBtn))) {
+        logger.warn("Music send button not found");
+        return false;
+      }
     } else {
       logger.warn("No music results found for title", { title });
       return false;
     }
+
+    logger.info("Music track played", { title });
+    return true;
   } catch (err) {
     logger.warn("Play music failed", {
       error: (err as Error).message,
