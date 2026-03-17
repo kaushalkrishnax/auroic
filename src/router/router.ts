@@ -124,7 +124,7 @@ export async function invokeRouter(
         },
         {
           role: "user",
-          content: formattedWindow + `${!config.router.think && "\n/no_think"}`,
+          content: formattedWindow + `${!config.router.think ? "\n/no_think" : ""}`,
         },
       ],
       options: config.router.options,

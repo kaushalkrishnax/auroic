@@ -1,23 +1,21 @@
-import { sendGIF, sendSticker } from "@/automation/chat.js";
+import { playMusic, sendGIF, sendSticker } from "@/automation/chat.js";
+import type { ActionContext } from "@/types/index.js";
 import logger from "@/utils/logger.js";
 
 /**
- * Command handler function type
- * @param page - Playwright page instance
- * @param query - The extracted query text (input with command words stripped)
- * @param conversationId - The conversation ID where the command was triggered
+ * Command handler function type.
  */
-export type CommandHandler = (
-  query: string,
-  conversationId: string,
-) => Promise<void>;
+export type CommandHandler = (context: ActionContext) => Promise<void>;
 
 /**
  * Command definition with metadata and handler
  */
 export interface CommandDefinition {
   name: string;
+  /** Stable identifier used to look up this command in the DB and map to its handler. */
+  handlerName: string;
   actionType: "text" | "ignore" | "react" | "media";
+  description: string;
   commandWords: string[];
   handler: CommandHandler;
 }
@@ -26,46 +24,76 @@ export interface CommandDefinition {
  * Predefined command handlers
  */
 const commandHandlers = {
-  async sendGif(query: string, conversationId: string) {
-    const title = query.trim() || "funny";
-    const sent = await sendGIF(title, conversationId);
+  async sendGif(context: ActionContext) {
+    const title = context.classifiedCommand!.query.trim() || "funny";
+    const sent = await sendGIF(title, context.chatId, context.targetMessageId!);
     if (!sent) {
       throw new Error(`send_gif failed for query: ${title}`);
     }
 
     logger.info("Command handler sent GIF", {
       command: "send_gif",
-      conversationId,
+      conversationId: context.chatId,
       query: title,
     });
   },
-  async sendImage(query: string, conversationId: string) {
-    console.log(`[Command:sendImage] Query: "${query}" in ${conversationId}`);
+
+  async sendImage(context: ActionContext) {
+    console.log(
+      `[Command:sendImage] Query: "${context.classifiedCommand!.query}" in ${context.chatId} for ${context.targetMessageId}`,
+    );
     // TODO: Implement image generation and send logic
   },
-  async sendSticker(query: string, conversationId: string) {
-    const title = query.trim() || "funny";
-    const sent = await sendSticker(title, conversationId);
+
+  async sendSticker(context: ActionContext) {
+    const title = context.classifiedCommand!.query.trim() || "funny";
+    const sent = await sendSticker(
+      title,
+      context.chatId,
+      context.targetMessageId!,
+    );
     if (!sent) {
       throw new Error(`send_sticker failed for query: ${title}`);
     }
 
     logger.info("Command handler sent sticker", {
       command: "send_sticker",
-      conversationId,
+      conversationId: context.chatId,
       query: title,
     });
   },
-  async sendVoiceNote(query: string, conversationId: string) {
+
+  async sendVoiceNote(context: ActionContext) {
     console.log(
-      `[Command:sendVoiceNote] Query: "${query}" in ${conversationId}`,
+      `[Command:sendVoiceNote] Query: "${context.classifiedCommand!.query}" in ${context.chatId} for ${context.targetMessageId}`,
     );
     // TODO: Implement voice note recording and send logic
   },
-  async searchweb(query: string, conversationId: string) {
-    console.log(`[Command:searchweb] Query: "${query}" in ${conversationId}`);
+
+  async playMusic(context: ActionContext) {
+    const title = context.classifiedCommand!.query.trim();
+    
+    const sent = await playMusic(
+      title,
+      context.chatId
+    );
+    if (!sent) {
+      throw new Error(`play_music failed for query: ${title}`);
+    }
+
+    logger.info("Command handler played music", {
+      command: "play_music",
+      conversationId: context.chatId,
+      query: title,
+    });
+  },
+
+  async searchweb(context: ActionContext) {
+    console.log(
+      `[Command:searchweb] Query: "${context.classifiedCommand!.query}" in ${context.chatId} for ${context.targetMessageId}`,
+    );
     // TODO: Implement search within conversation
-  }
+  },
 };
 
 /**
@@ -74,34 +102,52 @@ const commandHandlers = {
 export const COMMAND_REGISTRY: CommandDefinition[] = [
   {
     name: "send_gif",
+    handlerName: "sendGif",
     actionType: "media",
+    description: "Send a GIF matching the query",
     commandWords: ["gif", "meme"],
     handler: commandHandlers.sendGif,
   },
   {
     name: "send_image",
+    handlerName: "sendImage",
     actionType: "media",
+    description: "Generate and send an image",
     commandWords: ["create", "pic", "picture", "generate"],
     handler: commandHandlers.sendImage,
   },
   {
     name: "send_sticker",
+    handlerName: "sendSticker",
     actionType: "media",
+    description: "Send a sticker matching the query",
     commandWords: ["sticker"],
     handler: commandHandlers.sendSticker,
   },
   {
     name: "send_voice_note",
+    handlerName: "sendVoiceNote",
     actionType: "media",
+    description: "Record and send a voice note",
     commandWords: ["voice", "speak"],
     handler: commandHandlers.sendVoiceNote,
   },
   {
+    name: "play_music",
+    handlerName: "playMusic",
+    actionType: "media",
+    description: "Find and play a music track",
+    commandWords: ["play", "music", "song"],
+    handler: commandHandlers.playMusic,
+  },
+  {
     name: "search_web",
+    handlerName: "searchweb",
     actionType: "text",
+    description: "Search the web and return a text response",
     commandWords: ["search", "find", "web"],
     handler: commandHandlers.searchweb,
-  }
+  },
 ];
 
 /**

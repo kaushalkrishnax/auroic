@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { getConfigDB } from "@/db/configDb.js";
 import { commandsTable, settingsTable } from "@/db/configSchema.js";
 import { COMMAND_REGISTRY } from "@/command/commandRegistry.js";
+import logger from "@/utils/logger.js";
 
 export interface RuntimeSettingsPayload {
   triggers: {
@@ -230,8 +231,59 @@ export function ensureConfigSeeded(): void {
       command: entry.name,
       aliases: entry.commandWords,
       filterKeywords: entry.commandWords,
-      handlerName: entry.handler.name,
+      handlerName: entry.handlerName,
       isEnabled: true,
     })),
   );
+}
+
+/**
+ * Reconciles the commands table with COMMAND_REGISTRY on every startup.
+ *
+ * Rules:
+ * - Commands removed from the registry are deleted from the DB.
+ * - Commands added to the registry are inserted with defaults for editable fields.
+ * - Editable fields (aliases, filterKeywords, isEnabled) are never overwritten.
+ * - Non-editable field (handlerName) is kept in sync with the registry.
+ */
+export function syncCommandsWithRegistry(): void {
+  const db = getConfigDB();
+
+  const registryMap = new Map(COMMAND_REGISTRY.map((c) => [c.name, c]));
+  const existingRows = db.select({ command: commandsTable.command }).from(commandsTable).all();
+  const existingNames = new Set(existingRows.map((r) => r.command));
+
+  // Delete rows whose commands no longer exist in the registry
+  for (const { command } of existingRows) {
+    if (!registryMap.has(command)) {
+      db.delete(commandsTable).where(eq(commandsTable.command, command)).run();
+      logger.info("Removed command from DB (deleted from registry)", { command });
+    }
+  }
+
+  // Insert or update-non-editable-fields for registry commands
+  for (const entry of COMMAND_REGISTRY) {
+    if (!existingNames.has(entry.name)) {
+      // New command: insert with registry values as defaults for editable fields
+      db
+        .insert(commandsTable)
+        .values({
+          command: entry.name,
+          aliases: entry.commandWords,
+          filterKeywords: entry.commandWords,
+          handlerName: entry.handlerName,
+          isEnabled: true,
+          updatedAt: nowIso(),
+        })
+        .run();
+      logger.info("Added command to DB from registry", { command: entry.name });
+    } else {
+      // Existing command: only update the non-editable handlerName
+      db
+        .update(commandsTable)
+        .set({ handlerName: entry.handlerName, updatedAt: nowIso() })
+        .where(eq(commandsTable.command, entry.name))
+        .run();
+    }
+  }
 }

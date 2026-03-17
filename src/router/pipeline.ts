@@ -25,13 +25,17 @@ import { invokeRouter } from "@/router/router.js";
 import {
   classifyCommand,
   hasCommandTriggerKeyword,
-  type ClassifiedCommand,
 } from "@/command/command.js";
 import { executeAction } from "@/router/dispatcher.js";
 import { emitEvent } from "@/events.js";
 import logger from "@/utils/logger.js";
 import getConfig from "@/runtime/index.js";
-import type { ActionContext, Message, RouterDecision } from "@/types/index.js";
+import type {
+  ActionContext,
+  ClassifiedCommand,
+  Message,
+  RouterDecision,
+} from "@/types/index.js";
 
 interface ConversationHistoryEntry {
   role: "user" | "assistant";

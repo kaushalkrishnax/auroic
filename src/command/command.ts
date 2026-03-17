@@ -1,24 +1,20 @@
 import getConfig from "@/runtime/index.js";
-import type { ActionType } from "@/types/index.js";
+import type {
+  ActionContext,
+  ActionType,
+  ClassifiedCommand,
+} from "@/types/index.js";
 import logger from "@/utils/logger.js";
 import {
   COMMAND_REGISTRY,
   getCommandHandler,
 } from "@/command/commandRegistry.js";
-import type { Page } from "playwright";
 
 interface CommandSelection {
   commandName: string;
   actionType: ActionType;
   aliases: Set<string>;
   filterKeywords: Set<string>;
-}
-
-export interface ClassifiedCommand {
-  commandName: string;
-  actionType: ActionType;
-  query: string;
-  similarity: number;
 }
 
 const registryByName = new Map(
@@ -151,35 +147,35 @@ export async function classifyCommand(text: string): Promise<ClassifiedCommand |
 }
 
 export async function executeCommand(
-  classified: ClassifiedCommand,
-  conversationId: string,
+  context: ActionContext,
 ): Promise<void> {
-  const handler = getCommandHandler(classified.commandName);
+  const command = context.classifiedCommand!;
+  const handler = getCommandHandler(command.commandName);
 
   if (!handler) {
     logger.warn("No handler found for command", {
-      commandName: classified.commandName,
+      commandName: command.commandName,
     });
     return;
   }
 
   try {
     logger.info("Executing command", {
-      commandName: classified.commandName,
-      actionType: classified.actionType,
-      query: classified.query,
-      similarity: classified.similarity,
-      conversationId,
+      commandName: command.commandName,
+      actionType: command.actionType,
+      query: command.query,
+      similarity: command.similarity,
+      chatId: context.chatId,
     });
 
-    await handler(classified.query, conversationId);
+    await handler(context);
 
     logger.info("Command executed successfully", {
-      commandName: classified.commandName,
+      commandName: command.commandName,
     });
   } catch (err) {
     logger.error("Command execution failed", {
-      commandName: classified.commandName,
+      commandName: command.commandName,
       error: (err as Error).message,
       stack: (err as Error).stack,
     });

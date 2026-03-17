@@ -5,6 +5,7 @@ import { initConfigDB } from "@/db/configDb.js";
 import {
   DEFAULT_RUNTIME_SETTINGS,
   ensureConfigSeeded,
+  syncCommandsWithRegistry,
   getCommandConfigs,
   getSettingsPayload,
   type CommandConfigRow,
@@ -40,6 +41,7 @@ export function setBotFbid(id: string): void {
 export function initRuntimeConfig(): void {
   initConfigDB(env.configDbPath);
   ensureConfigSeeded();
+  syncCommandsWithRegistry();
   reloadConfig();
 }
 

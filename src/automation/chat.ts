@@ -135,7 +135,10 @@ export async function attachDataMidToDOM(
     await sleep(150);
   }
 
-  logger.warn("Unable to attach data-mid to DOM message", { chatId, targetMid });
+  logger.warn("Unable to attach data-mid to DOM message", {
+    chatId,
+    targetMid,
+  });
   return false;
 }
 
@@ -174,12 +177,18 @@ export async function attachDataMidsForRecentWindow(
 
       const group = groups.nth(domStart + i);
       try {
-        const currentMid = await group.getAttribute("data-mid", { timeout: 5000 });
+        const currentMid = await group.getAttribute("data-mid", {
+          timeout: 5000,
+        });
         if (currentMid === mid) continue;
 
-        await group.evaluate((el, resolvedMid) => {
-          el.setAttribute("data-mid", resolvedMid);
-        }, mid, { timeout: 5000 });
+        await group.evaluate(
+          (el, resolvedMid) => {
+            el.setAttribute("data-mid", resolvedMid);
+          },
+          mid,
+          { timeout: 5000 },
+        );
       } catch {
         // DOM changed during iteration — break to retry on next attempt
         break;
@@ -236,7 +245,9 @@ export async function stampInitialDataMids(
       const existing = await group.getAttribute("data-mid", { timeout: 5000 });
       if (existing) continue;
       const mid = dbSlice[i].messageId;
-      await group.evaluate((el, m) => el.setAttribute("data-mid", m), mid, { timeout: 5000 });
+      await group.evaluate((el, m) => el.setAttribute("data-mid", m), mid, {
+        timeout: 5000,
+      });
     } catch {
       // DOM changed, skip this element
     }
@@ -251,7 +262,9 @@ export async function getRecentDomMessages(
   limit: number,
 ): Promise<DomMessageSnapshot[]> {
   const page = getPage();
-  const groups = page.locator(SELECTORS.messageList).locator(SELECTORS.messageGroup);
+  const groups = page
+    .locator(SELECTORS.messageList)
+    .locator(SELECTORS.messageGroup);
 
   const count = await groups.count();
   if (!count || limit <= 0) return [];
@@ -261,31 +274,28 @@ export async function getRecentDomMessages(
 
   for (let i = start; i < count; i++) {
     const group = groups.nth(i);
-    const mid = await group.getAttribute("data-mid", { timeout: 5000 }).catch(() => null);
+    const mid = await group
+      .getAttribute("data-mid", { timeout: 5000 })
+      .catch(() => null);
     const text = await group
-      .evaluate(
-        (el, textSelector) => {
-          const all = Array.from(el.querySelectorAll(textSelector));
+      .evaluate((el, textSelector) => {
+        const all = Array.from(el.querySelectorAll(textSelector));
 
-          const leaves = all.filter(
-            (n) => !n.querySelector(textSelector),
-          );
+        const leaves = all.filter((n) => !n.querySelector(textSelector));
 
-          const cleaned = leaves.filter((n) => {
-            const t = (n.textContent ?? "").trim();
-            
-            if (/^.{0,50}\breplied to\b/i.test(t)) return false;
-            return true;
-          });
+        const cleaned = leaves.filter((n) => {
+          const t = (n.textContent ?? "").trim();
 
-          return cleaned
-            .map((n) => (n.textContent ?? "").trim())
-            .filter(Boolean)
-            .join(" ")
-            .trim();
-        },
-        SELECTORS.messageText,
-      )
+          if (/^.{0,50}\breplied to\b/i.test(t)) return false;
+          return true;
+        });
+
+        return cleaned
+          .map((n) => (n.textContent ?? "").trim())
+          .filter(Boolean)
+          .join(" ")
+          .trim();
+      }, SELECTORS.messageText)
       .catch(() => "");
 
     if (!text) continue;
@@ -392,7 +402,8 @@ export async function sendText(
     const conversation = getConversationById(chatId);
     const trimmedText = text.trim();
     const outgoingText =
-      conversation?.isGroup === true || trimmedText.toUpperCase().endsWith("@BOT")
+      conversation?.isGroup === true ||
+      trimmedText.toUpperCase().endsWith("@BOT")
         ? text
         : trimmedText.length
           ? `${trimmedText} @BOT`
@@ -618,6 +629,46 @@ export async function sendStickerOrGIF(
   }
 }
 
+export async function playMusic(
+  title: string,
+  chatId: string,
+): Promise<boolean> {
+  try {
+    const page = getPage();
+
+    // Try sticker first
+    let mediaDialog = await openMediaTab(page, 2);
+    if (!mediaDialog) return false;
+
+    let success = await searchAndSelectMedia(
+      mediaDialog,
+      SELECTORS.musicSearchInput,
+      title,
+      0,
+    );
+
+    const musicSendBtn = mediaDialog.locator(SELECTORS.musicSendButton).first();
+
+    if (!(await click(musicSendBtn))) {
+      logger.warn("Music send button not found");
+      return false;
+    }
+
+    if (success) {
+      logger.info("Music sent", { title });
+      return true;
+    } else {
+      logger.warn("No music results found for title", { title });
+      return false;
+    }
+  } catch (err) {
+    logger.warn("Play music failed", {
+      error: (err as Error).message,
+    });
+    return false;
+  }
+}
+
 // export async function sendVoiceNote(
 //   title: string,
 //   chatId: string,
@@ -634,7 +685,6 @@ export async function sendStickerOrGIF(
 //       logger.warn("Voice note button not found");
 //       return false;
 //     }
-
 
 //     if (await click(result)) {
 //       logger.info("Voice note sent", { title, reply: !!targetMid });

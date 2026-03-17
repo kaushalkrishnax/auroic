@@ -15,6 +15,13 @@ export interface RouterDecision {
   reason: string | null;
 }
 
+export interface ClassifiedCommand {
+  commandName: string;
+  actionType: ActionType;
+  query: string;
+  similarity: number;
+}
+
 /** Matches the Drizzle SelectMessage row shape used in the router pipeline. */
 export interface Message {
   id: number;
@@ -41,12 +48,7 @@ export interface ActionContext {
   targetMessageId: string | null;
   targetTextContent: string | null;
   /** Classified command if matched by command classifier */
-  classifiedCommand?: {
-    commandName: string;
-    actionType: ActionType;
-    query: string;
-    similarity: number;
-  };
+  classifiedCommand?: ClassifiedCommand;
 }
 
 /** Raw Instagram user shape from GraphQL responses */

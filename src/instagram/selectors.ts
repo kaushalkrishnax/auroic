@@ -86,6 +86,8 @@ const SELECTORS = Object.freeze({
 
   mediaItemButton:
     'div[role="button"]:has(img), div[role="button"]:has(video)',
+  
+  musicSendButton: 'div[role="button"]:has(div[role="button"]:has(svg[data-name*="Layer 1"]))',
 
 
   /* EMOJI PICKER */
