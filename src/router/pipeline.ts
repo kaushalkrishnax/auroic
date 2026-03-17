@@ -27,6 +27,7 @@ import {
   hasCommandTriggerKeyword,
 } from "@/command/command.js";
 import { executeAction } from "@/router/dispatcher.js";
+import { runWithAutomationLock } from "@/automation/executionLock.js";
 import { emitEvent } from "@/events.js";
 import logger from "@/utils/logger.js";
 import getConfig from "@/runtime/index.js";
@@ -306,9 +307,11 @@ async function processPassiveBatch(chatId: string): Promise<void> {
       totalWindow,
     });
 
-    await initInstagramSession();
-    await navigateToChat(chatId);
-    await stampInitialDataMids(chatId, totalWindow);
+    await runWithAutomationLock("passive-prepare", chatId, async () => {
+      await initInstagramSession();
+      await navigateToChat(chatId);
+      await stampInitialDataMids(chatId, totalWindow);
+    });
 
     // Build router window from DB so candidates are anchored to newly tracked
     // passive mids, not whichever messages happen to be visible in the DOM.

@@ -12,6 +12,7 @@ import { executeMedia } from "@/router/actions/media.js";
 import { executeCommand } from "@/command/command.js";
 import { navigateToChat } from "@/automation/navigation.js";
 import { initInstagramSession } from "@/automation/session.js";
+import { runWithAutomationLock } from "@/automation/executionLock.js";
 
 type ActionHandler = (context: ActionContext) => Promise<string | null>;
 
@@ -38,26 +39,28 @@ export async function executeAction(
     return null;
   }
 
-  await prepareActionExecution(context.chatId);
+  return runWithAutomationLock("execute-action", context.chatId, async () => {
+    await prepareActionExecution(context.chatId);
 
-  // If this is a classified command, execute the command handler
-  if (classifiedCommand) {
-    logger.info("Executing classified command", {
-      commandName: classifiedCommand.commandName,
-      actionType: classifiedCommand.actionType,
-    });
+    // If this is a classified command, execute the command handler
+    if (classifiedCommand) {
+      logger.info("Executing classified command", {
+        commandName: classifiedCommand.commandName,
+        actionType: classifiedCommand.actionType,
+      });
 
-    await executeCommand(context);
+      await executeCommand(context);
 
-    // Command handlers don't return text, so return a placeholder
-    return `[Command: ${classifiedCommand.commandName}]`;
-  }
+      // Command handlers don't return text, so return a placeholder
+      return `[Command: ${classifiedCommand.commandName}]`;
+    }
 
-  const handler = ACTION_HANDLERS[decision.type];
-  if (!handler) {
-    logger.warn(`Unknown action type: ${decision.type}`);
-    return null;
-  }
+    const handler = ACTION_HANDLERS[decision.type];
+    if (!handler) {
+      logger.warn(`Unknown action type: ${decision.type}`);
+      return null;
+    }
 
-  return handler(context);
+    return handler(context);
+  });
 }

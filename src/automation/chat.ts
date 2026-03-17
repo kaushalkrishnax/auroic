@@ -14,6 +14,15 @@ import { sleep } from "@/utils/delay.js";
 
 const TARGET_MAX_AGE_MS = 20_000;
 
+function isTargetChatOpen(chatId: string): boolean {
+  try {
+    const page = getPage();
+    return page.url().includes(`/direct/t/${chatId}`);
+  } catch {
+    return false;
+  }
+}
+
 export interface DomMessageSnapshot {
   mid: string | null;
   text: string;
@@ -122,6 +131,10 @@ export async function attachDataMidToDOM(
   chatId: string,
   targetMid: string,
 ): Promise<boolean> {
+  if (!isTargetChatOpen(chatId)) {
+    return false;
+  }
+
   const attempts = 6;
 
   for (let i = 0; i < attempts; i++) {
@@ -150,6 +163,10 @@ export async function attachDataMidsForRecentWindow(
   chatId: string,
   windowSize = 8,
 ): Promise<number> {
+  if (!isTargetChatOpen(chatId)) {
+    return 0;
+  }
+
   const attempts = 6;
 
   for (let attempt = 0; attempt < attempts; attempt++) {
@@ -225,6 +242,10 @@ export async function stampInitialDataMids(
   chatId: string,
   limit: number,
 ): Promise<void> {
+  if (!isTargetChatOpen(chatId)) {
+    return;
+  }
+
   const page = getPage();
   const messageList = page.locator(SELECTORS.messageList);
   const allGroups = messageList.locator(SELECTORS.messageGroup);
