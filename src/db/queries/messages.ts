@@ -68,15 +68,17 @@ export function getLatestMessages(
   limit = 5,
   includeDeleted = false,
 ): SelectMessage[] {
+  const whereClause = includeDeleted
+    ? eq(messages.conversationId, conversationId)
+    : and(
+        eq(messages.conversationId, conversationId),
+        eq(messages.isDeleted, false),
+      );
+
   const rows = getDB()
     .select()
     .from(messages)
-    .where(
-      and(
-        eq(messages.conversationId, conversationId),
-        eq(messages.isDeleted, includeDeleted ?? false),
-      ),
-    )
+    .where(whereClause)
     .orderBy(desc(messages.timestampMs))
     .limit(limit)
     .all();

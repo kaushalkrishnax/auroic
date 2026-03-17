@@ -34,6 +34,19 @@ const tracker: ConversationTracker = {
   processedThisSession: new Set<string>(),
 };
 
+const MAX_TRACKED_SESSION_MIDS = 5000;
+
+function trackProcessedMid(mid: string): void {
+  if (tracker.processedThisSession.has(mid)) return;
+  tracker.processedThisSession.add(mid);
+
+  while (tracker.processedThisSession.size > MAX_TRACKED_SESSION_MIDS) {
+    const oldest = tracker.processedThisSession.values().next().value;
+    if (!oldest) break;
+    tracker.processedThisSession.delete(oldest);
+  }
+}
+
 // Shutdown
 
 let shuttingDown = false;
@@ -78,7 +91,7 @@ function onAppEvent(event: AppEvent): void {
         return;
       }
 
-      tracker.processedThisSession.add(event.mid);
+      trackProcessedMid(event.mid);
 
       attachDataMidToDOM(event.chatId, event.mid).catch((err) => {
         logger.warn("Failed to stamp data-mid on DOM message", {

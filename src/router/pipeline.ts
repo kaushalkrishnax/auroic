@@ -54,27 +54,56 @@ interface CandidateContentResult {
   isDirectMention: boolean;
 }
 
-interface PassiveMonitoringState {
-  unprocessedMids: Set<string>;
-  flushTimer: ReturnType<typeof setTimeout> | null;
-  processing: boolean;
-}
-
 interface ConversationState {
   history: ConversationHistoryEntry[];
   candidates: QueuedCandidate[];
   batchTimeout: ReturnType<typeof setTimeout> | null;
   processing: boolean;
+  unprocessedMids: Set<string>;
+  passiveFlushTimer: ReturnType<typeof setTimeout> | null;
+  passiveProcessing: boolean;
+  lastTouchedAt: number;
 }
 
 const conversationStates = new Map<string, ConversationState>();
-const passiveStates = new Map<string, PassiveMonitoringState>();
 
 const BATCH_TIMEOUT_MS = 2000;
 const BATCH_HARD_LIMIT = 3;
 const MAX_MESSAGE_AGE_MS = 20_000;
 const CANDIDATE_SIZE = 3;
 const HISTORY_SIZE = 5;
+const STATE_IDLE_TTL_MS = 30 * 60 * 1000;
+const STATE_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+
+const stateSweepInterval = setInterval(() => {
+  const now = Date.now();
+
+  for (const [chatId, state] of conversationStates.entries()) {
+    const idleMs = now - state.lastTouchedAt;
+    const hasTimers = Boolean(state.batchTimeout || state.passiveFlushTimer);
+    const isBusy = state.processing || state.passiveProcessing;
+
+    if (idleMs <= STATE_IDLE_TTL_MS || hasTimers || isBusy) {
+      continue;
+    }
+
+    if (state.batchTimeout) {
+      clearTimeout(state.batchTimeout);
+      state.batchTimeout = null;
+    }
+    if (state.passiveFlushTimer) {
+      clearTimeout(state.passiveFlushTimer);
+      state.passiveFlushTimer = null;
+    }
+
+    conversationStates.delete(chatId);
+    logger.info("Evicted idle conversation runtime state", { chatId, idleMs });
+  }
+}, STATE_SWEEP_INTERVAL_MS);
+
+if (typeof stateSweepInterval.unref === "function") {
+  stateSweepInterval.unref();
+}
 
 // Trigger detection
 
@@ -124,9 +153,15 @@ function getConversationState(chatId: string): ConversationState {
       candidates: [],
       batchTimeout: null,
       processing: false,
+      unprocessedMids: new Set(),
+      passiveFlushTimer: null,
+      passiveProcessing: false,
+      lastTouchedAt: Date.now(),
     };
     conversationStates.set(chatId, state);
   }
+
+  state.lastTouchedAt = Date.now();
   return state;
 }
 
@@ -154,19 +189,6 @@ function appendHistoryPair(
   state.history = state.history.slice(-10);
 }
 
-function getPassiveState(chatId: string): PassiveMonitoringState {
-  let state = passiveStates.get(chatId);
-  if (!state) {
-    state = {
-      unprocessedMids: new Set(),
-      flushTimer: null,
-      processing: false,
-    };
-    passiveStates.set(chatId, state);
-  }
-  return state;
-}
-
 function getPassiveMonitoringConfig() {
   return getConfig().triggers.passiveMonitoring;
 }
@@ -175,7 +197,7 @@ function trackPassiveMessage(chatId: string, mid: string): void {
   const passive = getPassiveMonitoringConfig();
   if (!passive?.enabled) return;
 
-  const state = getPassiveState(chatId);
+  const state = getConversationState(chatId);
 
   // Already tracked (duplicate event).
   if (state.unprocessedMids.has(mid)) return;
@@ -192,9 +214,9 @@ function trackPassiveMessage(chatId: string, mid: string): void {
   // Count trigger
   if (state.unprocessedMids.size >= passive.messageCount) {
     // Clear the time trigger — count trigger takes priority.
-    if (state.flushTimer) {
-      clearTimeout(state.flushTimer);
-      state.flushTimer = null;
+    if (state.passiveFlushTimer) {
+      clearTimeout(state.passiveFlushTimer);
+      state.passiveFlushTimer = null;
     }
 
     logger.info("Passive: count threshold reached — flushing", {
@@ -207,7 +229,7 @@ function trackPassiveMessage(chatId: string, mid: string): void {
   }
 
   // Time trigger (start once, never reset)
-  if (!state.flushTimer) {
+  if (!state.passiveFlushTimer) {
     const delayMs = passive.timeThresholdMs;
 
     logger.info("Passive: starting time trigger", {
@@ -215,8 +237,8 @@ function trackPassiveMessage(chatId: string, mid: string): void {
       delayMs,
     });
 
-    state.flushTimer = setTimeout(() => {
-      state.flushTimer = null;
+    state.passiveFlushTimer = setTimeout(() => {
+      state.passiveFlushTimer = null;
 
       if (state.unprocessedMids.size === 0) return;
 
@@ -292,16 +314,18 @@ async function processPassiveBatch(chatId: string): Promise<void> {
   const passiveConfig = getPassiveMonitoringConfig();
   if (!passiveConfig?.enabled) return;
 
-  const passiveState = getPassiveState(chatId);
-  if (passiveState.processing) return;
-  passiveState.processing = true;
+  const state = getConversationState(chatId);
+  if (state.passiveProcessing) return;
+  state.passiveProcessing = true;
+
+  const consumedMids = new Set<string>();
 
   try {
     const totalWindow = HISTORY_SIZE + CANDIDATE_SIZE; // always 8
 
     logger.info("Processing passive batch", {
       chatId,
-      unprocessedCount: passiveState.unprocessedMids.size,
+      unprocessedCount: state.unprocessedMids.size,
       historySize: HISTORY_SIZE,
       candidateSize: CANDIDATE_SIZE,
       totalWindow,
@@ -324,10 +348,14 @@ async function processPassiveBatch(chatId: string): Promise<void> {
       return;
     }
 
-    const unprocessed = passiveState.unprocessedMids;
+    const unprocessed = state.unprocessedMids;
     const candidateMessages = dbWindow
       .filter((m) => unprocessed.has(m.messageId))
       .slice(-CANDIDATE_SIZE);
+
+    for (const candidate of candidateMessages) {
+      consumedMids.add(candidate.messageId);
+    }
 
     if (!candidateMessages.length) {
       logger.warn("Passive batch had no unprocessed candidates in DB window", {
@@ -509,20 +537,24 @@ async function processPassiveBatch(chatId: string): Promise<void> {
       content: resultText,
     });
 
-    const conversationState = getConversationState(chatId);
     appendHistoryPair(
-      conversationState,
+      state,
       targetCandidate.textContent ?? "",
       resultText ?? `[${decision.type}]`,
     );
   } finally {
-    // Reset: clear unprocessed set and cancel any lingering timer.
-    passiveState.unprocessedMids.clear();
-    if (passiveState.flushTimer) {
-      clearTimeout(passiveState.flushTimer);
-      passiveState.flushTimer = null;
+    // Only clear mids touched by this batch so transient failures can retry.
+    for (const mid of consumedMids) {
+      state.unprocessedMids.delete(mid);
     }
-    passiveState.processing = false;
+
+    if (state.unprocessedMids.size === 0 && state.passiveFlushTimer) {
+      clearTimeout(state.passiveFlushTimer);
+      state.passiveFlushTimer = null;
+    }
+
+    state.passiveProcessing = false;
+    state.lastTouchedAt = Date.now();
   }
 }
 
@@ -560,164 +592,167 @@ async function processCandidates(chatId: string): Promise<void> {
 
   state.processing = true;
 
-  const toProcess = [...state.candidates];
-  state.candidates = [];
+  try {
+    const toProcess = [...state.candidates];
+    state.candidates = [];
 
-  for (const candidate of toProcess) {
-    const msg = getMessageByMid(candidate.messageId);
-    if (!msg) {
-      continue;
-    }
+    for (const candidate of toProcess) {
+      const msg = getMessageByMid(candidate.messageId);
+      if (!msg) {
+        continue;
+      }
 
-    const ageMs = Date.now() - candidate.queuedAtMs;
-    logger.info("Candidate age check", {
-      chatId,
-      mid: msg.messageId,
-      ageMs,
-      cutoffMs: MAX_MESSAGE_AGE_MS,
-    });
-
-    if (ageMs > MAX_MESSAGE_AGE_MS) {
-      logger.warn("Skipping candidate: too old", {
+      const ageMs = Date.now() - candidate.queuedAtMs;
+      logger.info("Candidate age check", {
         chatId,
         mid: msg.messageId,
         ageMs,
         cutoffMs: MAX_MESSAGE_AGE_MS,
       });
-      continue;
-    }
 
-    const modelHistory = getHistoryForModels(state.history);
-
-    try {
-      let decision: RouterDecision;
-      let classifiedCommand = null;
-
-      const hasCommandTrigger = await hasCommandTriggerKeyword(candidate.content);
-
-      // Run embedding classifier first when command trigger words are present.
-      if (hasCommandTrigger) {
-        try {
-          classifiedCommand = await classifyCommand(candidate.content);
-        } catch (cmdErr) {
-          logger.warn("Command classifier failed, falling back to router", {
-            chatId,
-            mid: msg.messageId,
-            error: (cmdErr as Error).message,
-          });
-        }
-      }
-
-      if (classifiedCommand) {
-        const title = classifiedCommand.query || classifiedCommand.commandName;
-        decision = {
-          type: classifiedCommand.actionType,
-          target: "C1",
-          effort: classifiedCommand.actionType === "text" ? "medium" : null,
-          title,
-          reason: `Command classifier (${classifiedCommand.commandName}) score=${classifiedCommand.similarity.toFixed(3)}`,
-        };
-
-        logger.info("Command classifier matched", {
+      if (ageMs > MAX_MESSAGE_AGE_MS) {
+        logger.warn("Skipping candidate: too old", {
           chatId,
           mid: msg.messageId,
-          commandName: classifiedCommand.commandName,
-          actionType: classifiedCommand.actionType,
-          similarity: classifiedCommand.similarity,
-          query: classifiedCommand.query,
-        });
-      } else {
-        const rawDecision = await invokeRouter(modelHistory, [candidate.content]);
-        decision = normalizeRouterDecision(rawDecision);
-      }
-
-      logger.info("Router decision", {
-        chatId,
-        mid: msg.messageId,
-        type: decision.type,
-        target: decision.target,
-        effort: decision.effort,
-        title: decision.title,
-      });
-
-      emitEvent({
-        type: "ROUTER_DECISION",
-        chatId,
-        decision,
-        resultText: null,
-      });
-
-      if (decision.type === "ignore") {
-        logger.info("Skipping candidate per router decision", {
-          chatId,
-          mid: msg.messageId,
+          ageMs,
+          cutoffMs: MAX_MESSAGE_AGE_MS,
         });
         continue;
       }
 
-      const context: ActionContext = {
-        chatId,
-        message: msg as Message,
-        history: modelHistory,
-        candidates: [candidate.content],
-        decision,
-        targetMessageId: msg.messageId,
-        targetTextContent: msg.textContent,
-        classifiedCommand: classifiedCommand || undefined,
-      };
+      const modelHistory = getHistoryForModels(state.history);
 
-      let resultText: string | null = null;
       try {
-        resultText = await executeAction(context);
+        let decision: RouterDecision;
+        let classifiedCommand = null;
+
+        const hasCommandTrigger = await hasCommandTriggerKeyword(candidate.content);
+
+        // Run embedding classifier first when command trigger words are present.
+        if (hasCommandTrigger) {
+          try {
+            classifiedCommand = await classifyCommand(candidate.content);
+          } catch (cmdErr) {
+            logger.warn("Command classifier failed, falling back to router", {
+              chatId,
+              mid: msg.messageId,
+              error: (cmdErr as Error).message,
+            });
+          }
+        }
+
+        if (classifiedCommand) {
+          const title = classifiedCommand.query || classifiedCommand.commandName;
+          decision = {
+            type: classifiedCommand.actionType,
+            target: "C1",
+            effort: classifiedCommand.actionType === "text" ? "medium" : null,
+            title,
+            reason: `Command classifier (${classifiedCommand.commandName}) score=${classifiedCommand.similarity.toFixed(3)}`,
+          };
+
+          logger.info("Command classifier matched", {
+            chatId,
+            mid: msg.messageId,
+            commandName: classifiedCommand.commandName,
+            actionType: classifiedCommand.actionType,
+            similarity: classifiedCommand.similarity,
+            query: classifiedCommand.query,
+          });
+        } else {
+          const rawDecision = await invokeRouter(modelHistory, [candidate.content]);
+          decision = normalizeRouterDecision(rawDecision);
+        }
+
+        logger.info("Router decision", {
+          chatId,
+          mid: msg.messageId,
+          type: decision.type,
+          target: decision.target,
+          effort: decision.effort,
+          title: decision.title,
+        });
+
+        emitEvent({
+          type: "ROUTER_DECISION",
+          chatId,
+          decision,
+          resultText: null,
+        });
+
+        if (decision.type === "ignore") {
+          logger.info("Skipping candidate per router decision", {
+            chatId,
+            mid: msg.messageId,
+          });
+          continue;
+        }
+
+        const context: ActionContext = {
+          chatId,
+          message: msg as Message,
+          history: modelHistory,
+          candidates: [candidate.content],
+          decision,
+          targetMessageId: msg.messageId,
+          targetTextContent: msg.textContent,
+          classifiedCommand: classifiedCommand || undefined,
+        };
+
+        let resultText: string | null = null;
+        try {
+          resultText = await executeAction(context);
+        } catch (err) {
+          logger.error("Action execution failed", {
+            chatId,
+            mid: msg.messageId,
+            error: (err as Error).message,
+          });
+        }
+
+        insertOutgoing({
+          conversationId: chatId,
+          targetMessageId: msg.messageId,
+          actionType: decision.type,
+          effortLevel: decision.effort ?? null,
+          intentLabel: decision.title ?? null,
+          messageContent: resultText,
+          executionStatus: resultText !== null ? "sent" : "failed",
+          platformMessageId: null,
+        });
+
+        emitEvent({
+          type: "OUTGOING",
+          chatId,
+          actionType: decision.type,
+          content: resultText,
+        });
+
+        appendHistoryPair(
+          state,
+          candidate.content,
+          resultText ?? `[${decision.type}]`,
+        );
+
+        if (config.debug.logRouterWindow) {
+          logger.info("Conversation state", {
+            chatId,
+            historyEntries: state.history.length,
+            pendingCandidates: state.candidates.length,
+          });
+        }
       } catch (err) {
-        logger.error("Action execution failed", {
+        logger.error("Candidate processing failed", {
           chatId,
           mid: msg.messageId,
           error: (err as Error).message,
         });
       }
-
-      insertOutgoing({
-        conversationId: chatId,
-        targetMessageId: msg.messageId,
-        actionType: decision.type,
-        effortLevel: decision.effort ?? null,
-        intentLabel: decision.title ?? null,
-        messageContent: resultText,
-        executionStatus: resultText !== null ? "sent" : "failed",
-        platformMessageId: null,
-      });
-
-      emitEvent({
-        type: "OUTGOING",
-        chatId,
-        actionType: decision.type,
-        content: resultText,
-      });
-
-      appendHistoryPair(
-        state,
-        candidate.content,
-        resultText ?? `[${decision.type}]`,
-      );
-
-      if (config.debug.logRouterWindow) {
-        logger.info("Conversation state", {
-          chatId,
-          historyEntries: state.history.length,
-          pendingCandidates: state.candidates.length,
-        });
-      }
-    } catch (err) {
-      logger.error("Candidate processing failed", {
-        chatId,
-        mid: msg.messageId,
-        error: (err as Error).message,
-      });
     }
+  } finally {
+    state.processing = false;
+    state.lastTouchedAt = Date.now();
   }
-
-  state.processing = false;
 
   // If new candidates arrived while this batch was processing, flush promptly.
   if (state.candidates.length > 0 && !state.batchTimeout) {
