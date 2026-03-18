@@ -10,6 +10,7 @@ export const settingsTable = sqliteTable("settings", {
   debug: text("debug", { mode: "json" }),
   instagram: text("instagram", { mode: "json" }),
   commands: text("commands", { mode: "json" }),
+  tts: text("tts", { mode: "json" }),
   updatedAt: text("updated_at"),
 });
 

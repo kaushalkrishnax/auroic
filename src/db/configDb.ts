@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS settings (
   debug TEXT,
   instagram TEXT,
   commands TEXT,
+  tts TEXT,
   updated_at TEXT
 );
 
@@ -60,6 +61,17 @@ BEGIN
 END;
 `;
 
+function ensureSettingsColumns(sqlite: InstanceType<typeof Database>): void {
+  const columns = sqlite
+    .prepare("PRAGMA table_info(settings)")
+    .all() as Array<{ name: string }>;
+  const columnSet = new Set(columns.map((col) => String(col.name)));
+
+  if (!columnSet.has("tts")) {
+    sqlite.exec("ALTER TABLE settings ADD COLUMN tts TEXT");
+  }
+}
+
 export function initConfigDB(dbPath: string): ConfigDrizzleDB {
   if (_db) return _db;
 
@@ -70,6 +82,7 @@ export function initConfigDB(dbPath: string): ConfigDrizzleDB {
   _sqlite.pragma("journal_mode = WAL");
   _sqlite.pragma("foreign_keys = ON");
   _sqlite.exec(TABLE_BOOTSTRAP_SQL);
+  ensureSettingsColumns(_sqlite);
 
   _db = drizzle(_sqlite, { schema });
   logger.info("Config database initialised (Drizzle + SQLite)", {

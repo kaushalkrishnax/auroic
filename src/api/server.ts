@@ -42,6 +42,7 @@ import {
   type CommandConfigRow,
   type RuntimeSettingsPayload,
 } from "@/db/queries/config.js";
+import { getKokoroTtsOptions } from "@/runtime/tts.js";
 import type { AppEvent } from "@/events.js";
 
 // Paths
@@ -248,6 +249,14 @@ app.get("/api/commands/registry", (c) => {
         handlerName: commandDef.handler.name,
       })),
     );
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
+app.get("/api/tts/options", async (c) => {
+  try {
+    return c.json(await getKokoroTtsOptions());
   } catch (err) {
     return c.json({ error: (err as Error).message }, 500);
   }

@@ -1537,6 +1537,7 @@
       outgoing: [],
       commands: [],
       commandRegistry: [],
+      ttsOptions: null,
       config: null,
       configDirty: false,
       routerFeed: [], // live router decisions / events
@@ -1623,7 +1624,7 @@
     }
 
     async function refreshAll() {
-      const [conversations, messages, users, media, reactions, outgoing, commands, commandRegistry, cfg] =
+      const [conversations, messages, users, media, reactions, outgoing, commands, commandRegistry, cfg, ttsOptions] =
         await Promise.all([
           fetchJSON("/api/conversations"),
           fetchJSON("/api/messages?limit=200"),
@@ -1634,6 +1635,7 @@
           fetchJSON("/api/commands"),
           fetchJSON("/api/commands/registry"),
           fetchJSON("/config"),
+          fetchJSON("/api/tts/options"),
         ]);
       if (conversations) state.conversations = conversations;
       if (messages) state.messages = messages;
@@ -1644,6 +1646,7 @@
       if (commands) state.commands = commands;
       if (commandRegistry) state.commandRegistry = commandRegistry;
       if (cfg && !state.configDirty) state.config = cfg;
+      if (ttsOptions) state.ttsOptions = ttsOptions;
 
       state.counts = {
         conversations: state.conversations.length,
@@ -2650,6 +2653,7 @@
         .map(([key, val]) => {
           const path = prefix + "." + key;
           const label = key;
+          const selectOptions = getConfigStringOptions(path);
           if (typeof val === "boolean") {
             return `<div class="field-card">
         <div class="field-label">${esc(label)}</div>
@@ -2674,6 +2678,23 @@
             onchange="updateConfig('${esc(path)}', +this.value)">
           <button class="num-btn" onclick="adjustConfigNumber('${esc(path)}', this, ${step}, ${decimals})">+</button>
         </div>
+      </div>`;
+          }
+          if (
+            typeof val === "string" &&
+            Array.isArray(selectOptions) &&
+            selectOptions.length > 0
+          ) {
+            return `<div class="field-card">
+        <div class="field-label">${esc(label)}</div>
+        <select class="field-input" onchange="updateConfig('${esc(path)}', this.value)">
+          ${selectOptions
+                .map(
+                  (opt) =>
+                    `<option value="${esc(opt)}" ${opt === val ? "selected" : ""}>${esc(opt)}</option>`,
+                )
+                .join("")}
+        </select>
       </div>`;
           }
           if (typeof val === "string" && val.length > 60) {
@@ -2706,6 +2727,20 @@
     </div>`;
         })
         .join("");
+    }
+
+    function getConfigStringOptions(path) {
+      if (!state.ttsOptions || typeof state.ttsOptions !== "object") return null;
+
+      if (path === "tts.voice" && Array.isArray(state.ttsOptions.voices)) {
+        return state.ttsOptions.voices;
+      }
+
+      if (path === "tts.dtype" && Array.isArray(state.ttsOptions.dtypes)) {
+        return state.ttsOptions.dtypes;
+      }
+
+      return null;
     }
 
     function updateConfig(path, value) {

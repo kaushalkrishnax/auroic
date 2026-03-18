@@ -66,6 +66,7 @@ export function getConfig() {
   const llm = runtimeSettings.llm;
   const router = runtimeSettings.router;
   const commands = runtimeSettings.commands;
+  const tts = runtimeSettings.tts;
 
   const queryFilterWords = Array.isArray(commands.queryFilterWords)
     ? commands.queryFilterWords.map((v) => String(v).toLowerCase())
@@ -119,6 +120,16 @@ export function getConfig() {
     },
     debug: {
       logRouterWindow: runtimeSettings.debug.logRouterWindow ?? true,
+    },
+    tts: {
+      voice:
+        typeof tts?.voice === "string" && tts.voice.trim()
+          ? tts.voice.trim()
+          : "af_nicole",
+      dtype:
+        typeof tts?.dtype === "string" && tts.dtype.trim()
+          ? tts.dtype.trim().toLowerCase()
+          : "q8",
     },
     db: { path: env.dbPath },
     configDb: { path: env.configDbPath },

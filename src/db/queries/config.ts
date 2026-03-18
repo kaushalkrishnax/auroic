@@ -43,6 +43,10 @@ export interface RuntimeSettingsPayload {
     enabled?: boolean;
     queryFilterWords?: string[];
   };
+  tts: {
+    voice: string;
+    dtype: string;
+  };
 }
 
 export interface CommandConfigRow {
@@ -109,6 +113,10 @@ export const DEFAULT_RUNTIME_SETTINGS: RuntimeSettingsPayload = {
       "images",
     ],
   },
+  tts: {
+    voice: "af_nicole",
+    dtype: "q8",
+  },
 };
 
 function normalizeList(values: unknown): string[] {
@@ -146,6 +154,7 @@ export function getSettingsPayload(): RuntimeSettingsPayload {
     debug: (row.debug as RuntimeSettingsPayload["debug"]) ?? DEFAULT_RUNTIME_SETTINGS.debug,
     instagram: (row.instagram as RuntimeSettingsPayload["instagram"]) ?? DEFAULT_RUNTIME_SETTINGS.instagram,
     commands: (row.commands as RuntimeSettingsPayload["commands"]) ?? DEFAULT_RUNTIME_SETTINGS.commands,
+    tts: (row.tts as RuntimeSettingsPayload["tts"]) ?? DEFAULT_RUNTIME_SETTINGS.tts,
   };
 }
 
@@ -161,6 +170,7 @@ export function upsertSettingsPayload(payload: RuntimeSettingsPayload): void {
       debug: payload.debug,
       instagram: payload.instagram,
       commands: payload.commands,
+      tts: payload.tts,
       updatedAt: nowIso(),
     })
     .onConflictDoUpdate({
@@ -172,6 +182,7 @@ export function upsertSettingsPayload(payload: RuntimeSettingsPayload): void {
         debug: payload.debug,
         instagram: payload.instagram,
         commands: payload.commands,
+        tts: payload.tts,
         updatedAt: nowIso(),
       },
     })
