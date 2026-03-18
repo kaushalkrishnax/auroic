@@ -150,7 +150,76 @@ Edit `.env` for secrets and chat IDs (`INSTAGRAM_CHAT_IDS=id1,id2,id3`), and `sr
 
 The command-classifier model is loaded from the local `indic-sbert-onnx/` folder in project root. No `git clone` step is required.
 
-### Run
+---
+
+### Persistent Virtual Mic Setup (PipeWire)
+
+This sets up a virtual microphone (`tts_mic`) backed by a virtual sink (`tts_sink`) automatically on startup.
+
+```bash
+# Create setup script
+mkdir -p ~/.local/bin
+nano ~/.local/bin/tts-audio-setup.sh
+```
+
+```bash
+#!/bin/bash
+
+# Remove old modules (avoid duplicates)
+pactl unload-module module-null-sink 2>/dev/null
+pactl unload-module module-remap-source 2>/dev/null
+
+# Create virtual sink (speaker)
+pactl load-module module-null-sink \
+  sink_name=tts_sink \
+  sink_properties=device.description=TTS_SINK
+
+# Create virtual microphone from sink monitor
+pactl load-module module-remap-source \
+  master=tts_sink.monitor \
+  source_name=tts_mic \
+  source_properties=device.description=TTS_MIC
+```
+
+```bash
+# Make script executable
+chmod +x ~/.local/bin/tts-audio-setup.sh
+```
+
+```bash
+# Create systemd user service
+mkdir -p ~/.config/systemd/user
+nano ~/.config/systemd/user/tts-audio.service
+```
+
+```ini
+[Unit]
+Description=Setup TTS virtual audio
+
+[Service]
+ExecStart=%h/.local/bin/tts-audio-setup.sh
+Type=oneshot
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+# Enable and start service
+systemctl --user daemon-reload
+systemctl --user enable tts-audio.service
+systemctl --user start tts-audio.service
+```
+
+```bash
+# Verify devices
+pactl list short sinks
+pactl list short sources
+```
+
+---
+
+### Run the System
 
 ```bash
 # Install deps (also runs playwright install chromium-headless-shell)

@@ -45,11 +45,13 @@ export async function connectBrowser(): Promise<{ context: BrowserContext }> {
       "--disable-renderer-backgrounding",
       "--disable-sync",
       "--no-first-run",
-      "--mute-audio",
       "--disable-default-apps",
       "--disable-component-update",
       "--blink-settings=imagesEnabled=false",
+      "--use-fake-ui-for-media-stream",
+      "--allow-file-access-from-files",
     ],
+    permissions: ["microphone"],
   });
 
   context.on("close", () => {

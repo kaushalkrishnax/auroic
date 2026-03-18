@@ -1,4 +1,4 @@
-import { playMusic, sendGIF, sendSticker } from "@/automation/chat.js";
+import { playMusic, sendGIF, sendSticker, sendVoiceNote } from "@/automation/chat.js";
 import type { ActionContext } from "@/types/index.js";
 import logger from "@/utils/logger.js";
 
@@ -64,27 +64,36 @@ const commandHandlers = {
   },
 
   async sendVoiceNote(context: ActionContext) {
-    console.log(
-      `[Command:sendVoiceNote] Query: "${context.classifiedCommand!.query}" in ${context.chatId} for ${context.targetMessageId}`,
+    const text = context.classifiedCommand!.query.trim();
+    const sent = await sendVoiceNote(
+      text,
+      context.chatId,
+      context.targetMessageId!,
     );
-    // TODO: Implement voice note recording and send logic
+    if (!sent) {
+      throw new Error(`send_voice_note failed for query: ${text}`);
+    }
+
+    logger.info("Command handler sent voice note", {
+      command: "send_voice_note",
+      conversationId: context.chatId,
+      query: text,
+    });
   },
 
   async playMusic(context: ActionContext) {
-    const title = context.classifiedCommand!.query.trim();
-    
-    const sent = await playMusic(
-      title,
-      context.chatId
-    );
+    const query = context.classifiedCommand!.query.trim();
+
+    const sent = await playMusic(query);
+
     if (!sent) {
-      throw new Error(`play_music failed for query: ${title}`);
+      throw new Error(`play_music failed for query: ${query}`);
     }
 
     logger.info("Command handler played music", {
       command: "play_music",
       conversationId: context.chatId,
-      query: title,
+      query,
     });
   },
 

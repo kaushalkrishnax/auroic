@@ -72,13 +72,17 @@ export function initConfigDB(dbPath: string): ConfigDrizzleDB {
   _sqlite.exec(TABLE_BOOTSTRAP_SQL);
 
   _db = drizzle(_sqlite, { schema });
-  logger.info("Config database initialised (Drizzle + SQLite)", { path: dbPath });
+  logger.info("Config database initialised (Drizzle + SQLite)", {
+    path: dbPath,
+  });
   return _db;
 }
 
 export function getConfigDB(): ConfigDrizzleDB {
   if (!_db) {
-    throw new Error("Config database not initialised — call initConfigDB() first");
+    throw new Error(
+      "Config database not initialised — call initConfigDB() first",
+    );
   }
   return _db;
 }

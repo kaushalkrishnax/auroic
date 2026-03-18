@@ -23,6 +23,7 @@ import { attachDataMidToDOM } from "@/automation/chat.js";
 import { eventBus } from "@/events.js";
 import type { AppEvent } from "@/events.js";
 import { processMessage } from "@/router/pipeline.js";
+import { initKokoro } from "./runtime/tts.js";
 
 interface ConversationTracker {
   sessionStartTime: number;
@@ -128,6 +129,7 @@ async function boot(): Promise<void> {
 
   try {
     await initInstagramSession();
+    await initKokoro()
   } catch (err) {
     logger.error("Failed to start browser or init Instagram session", {
       error: (err as Error).message,

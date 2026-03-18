@@ -3,14 +3,17 @@
  * Message targeting uses index-based DOM matching instead of text search.
  */
 
+import fs from "fs";
 import type { Locator, Page } from "playwright";
 import { find } from "node-emoji";
+import { parseBuffer } from "music-metadata";
 import { getPage } from "@/automation/session.js";
 import { getConversationById } from "@/db/queries/conversations.js";
 import { getLatestMessages, getMessageByMid } from "@/db/queries/messages.js";
 import SELECTORS from "@/instagram/selectors.js";
 import logger from "@/utils/logger.js";
 import { sleep } from "@/utils/delay.js";
+import { generateSpeechBuffer, playAudio } from "@/runtime/tts.js";
 
 const TARGET_MAX_AGE_MS = 20_000;
 
@@ -43,14 +46,22 @@ async function visible(locator: Locator, timeout = 5000): Promise<boolean> {
 
 async function click(locator: Locator): Promise<boolean> {
   if (!(await visible(locator))) return false;
-  await locator.click();
-  return true;
+  try {
+    await locator.click({ timeout: 5000 });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function hover(locator: Locator): Promise<boolean> {
   if (!(await visible(locator))) return false;
-  await locator.hover();
-  return true;
+  try {
+    await locator.hover({ timeout: 5000 });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /* ------------------------------------------------ */
@@ -92,8 +103,23 @@ async function findMessageContainer(
   }
 
   const domGroups: Locator[] = [];
-  for (let i = groupCount - take; i < groupCount; i++) {
-    domGroups.push(allGroups.nth(i));
+  for (let i = groupCount - 1; i >= 0 && domGroups.length < take; i--) {
+    const group = allGroups.nth(i);
+    try {
+      if (await group.isVisible()) {
+        domGroups.unshift(group);
+      }
+    } catch {
+      // Group detached while iterating; skip and continue.
+    }
+  }
+
+  // If visibility probing couldn't collect enough rows, fall back to raw tail.
+  if (domGroups.length < take) {
+    domGroups.length = 0;
+    for (let i = groupCount - take; i < groupCount; i++) {
+      domGroups.push(allGroups.nth(i));
+    }
   }
 
   const dbSlice = dbMessages.slice(-take);
@@ -387,24 +413,48 @@ export async function selectToReply(
   try {
     if (!chatId || !targetMid) return true;
 
-    const msg = await resolveTargetContainer(chatId, targetMid);
+    const attempts = 3;
 
-    if (!msg) {
-      logger.warn("Target message not found", { targetMid });
-      return false;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      const msg = await resolveTargetContainer(chatId, targetMid);
+
+      if (!msg) {
+        logger.warn("Target message not found", {
+          targetMid,
+          attempt,
+          attempts,
+        });
+        return false;
+      }
+
+      await msg.scrollIntoViewIfNeeded().catch(() => undefined);
+
+      if (!(await hover(msg))) {
+        logger.warn("Target message hover failed", {
+          targetMid,
+          attempt,
+          attempts,
+        });
+        await sleep(150);
+        continue;
+      }
+
+      const replyBtn = msg.locator(SELECTORS.replyButton).first();
+
+      if (await click(replyBtn)) {
+        logger.info("Reply mode activated", { targetMid, attempt });
+        return true;
+      }
+
+      logger.warn("Reply button not found", {
+        targetMid,
+        attempt,
+        attempts,
+      });
+      await sleep(150);
     }
 
-    if (!(await hover(msg))) return false;
-
-    const replyBtn = msg.locator(SELECTORS.replyButton).first();
-
-    if (await click(replyBtn)) {
-      logger.info("Reply mode activated", { targetMid });
-      return true;
-    } else {
-      logger.warn("Reply button not found", { targetMid });
-      return false;
-    }
+    return false;
   } catch (err) {
     logger.warn("Reply setup failed", {
       error: (err as Error).message,
@@ -626,9 +676,14 @@ export async function sendStickerOrGIF(
       return true;
     }
 
-    // Fallback to GIF if sticker fails
-    mediaDialog = await openMediaTab(page, 1);
-    if (!mediaDialog) return false;
+    // Fallback to GIF by switching tab in the already open media dialog.
+    const mediaTabList = mediaDialog.locator(SELECTORS.tabList).first();
+    const gifTab = mediaTabList.locator(SELECTORS.mediaTabButton).nth(1);
+
+    if (!(await click(gifTab))) {
+      logger.warn("Media tab 1 not found");
+      return false;
+    }
 
     success = await searchAndSelectMedia(
       mediaDialog,
@@ -650,21 +705,17 @@ export async function sendStickerOrGIF(
   }
 }
 
-export async function playMusic(
-  title: string,
-  chatId: string,
-): Promise<boolean> {
+export async function playMusic(query: string): Promise<boolean> {
   try {
     const page = getPage();
 
-    // Try sticker first
     let mediaDialog = await openMediaTab(page, 2);
     if (!mediaDialog) return false;
 
     let success = await searchAndSelectMedia(
       mediaDialog,
       SELECTORS.musicSearchInput,
-      title,
+      query,
       0,
     );
 
@@ -678,11 +729,11 @@ export async function playMusic(
         return false;
       }
     } else {
-      logger.warn("No music results found for title", { title });
+      logger.warn("No music results found for query", { query });
       return false;
     }
 
-    logger.info("Music track played", { title });
+    logger.info("Music track played", { query });
     return true;
   } catch (err) {
     logger.warn("Play music failed", {
@@ -692,37 +743,56 @@ export async function playMusic(
   }
 }
 
-// export async function sendVoiceNote(
-//   title: string,
-//   chatId: string,
-//   targetMid?: string,
-// ): Promise<boolean> {
-//   try {
-//     const page = getPage();
-//     const replyReady = await selectToReply(chatId, targetMid);
-//     if (targetMid && !replyReady) return false;
+export async function sendVoiceNote(
+  text: string,
+  chatId: string,
+  targetMid?: string,
+): Promise<boolean> {
+  try {
+    const page = getPage();
+    const replyReady = await selectToReply(chatId, targetMid);
+    if (targetMid && !replyReady) return false;
 
-//     const voiceBtn = page.locator(SELECTORS.voiceNoteButton).first();
+    const composer = page.locator(SELECTORS.messageComposer).first();
+    if (!(await visible(composer))) {
+      logger.warn("Message composer not found");
+      return false;
+    }
 
-//     if (!(await click(voiceBtn))) {
-//       logger.warn("Voice note button not found");
-//       return false;
-//     }
+    const micBtn = composer.locator(SELECTORS.voiceNoteButton).first();
+    const sendBtn = composer.locator(SELECTORS.sendVoiceNoteButton).first();
 
-//     if (await click(result)) {
-//       logger.info("Voice note sent", { title, reply: !!targetMid });
-//       return true;
-//     } else {
-//       logger.warn("No voice note results found for title", { title });
-//       return false;
-//     }
-//   } catch (err) {
-//     logger.warn("Send voice note failed", {
-//       error: (err as Error).message,
-//     });
-//     return false;
-//   }
-// }
+    const buffer = await generateSpeechBuffer(text);
+    await fs.promises.writeFile("temp_voice_note.wav", buffer);
+
+    const metadata = await parseBuffer(buffer);
+    const durationMs = Math.ceil((metadata.format.duration || 2) * 1000) + 300;
+
+    if (!(await click(micBtn))) {
+      logger.warn("Failed to click voice note button");
+      return false;
+    }
+
+    await page.waitForTimeout(200);
+
+    playAudio("temp_voice_note.wav");
+
+    await page.waitForTimeout(durationMs);
+
+    if (!(await click(sendBtn))) {
+      logger.warn("Failed to click voice note button to stop recording");
+      return false;
+    }
+
+    logger.info("Voice note sent", { text, reply: !!targetMid });
+    return true;
+  } catch (err) {
+    logger.warn("Send voice note failed", {
+      error: (err as Error).message,
+    });
+    return false;
+  }
+}
 
 /* ------------------------------------------------ */
 /* Add reaction                                      */
