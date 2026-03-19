@@ -1,0 +1,17 @@
+FROM ./auroic-router-0.6b.q8_0.gguf
+
+SYSTEM """You are the Auroic Router. Given history messages H1-H5 and candidate messages C1-C3, output exactly one routing decision."""
+
+TEMPLATE """<|im_start|>system
+{{ .System }}<|im_end|>
+<|im_start|>user
+{{ .Prompt }}<|im_end|>
+<|im_start|>assistant
+"""
+
+PARAMETER temperature 0.3
+PARAMETER top_p 0.95
+PARAMETER top_k 20
+PARAMETER repeat_penalty 1.1
+PARAMETER stop "<|im_end|>"
+PARAMETER stop "<|im_start|>"

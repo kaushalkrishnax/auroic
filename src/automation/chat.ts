@@ -13,7 +13,7 @@ import { getLatestMessages, getMessageByMid } from "@/db/queries/messages.js";
 import SELECTORS from "@/instagram/selectors.js";
 import logger from "@/utils/logger.js";
 import { sleep } from "@/utils/delay.js";
-import { generateSpeechBuffer, playAudio } from "@/runtime/tts.js";
+import { generateSpeechBuffer, playBuffer } from "@/runtime/tts.js";
 
 const TARGET_MAX_AGE_MS = 20_000;
 
@@ -763,7 +763,6 @@ export async function sendVoiceNote(
     const sendBtn = composer.locator(SELECTORS.sendVoiceNoteButton).first();
 
     const buffer = await generateSpeechBuffer(text);
-    await fs.promises.writeFile("temp_voice_note.wav", buffer);
 
     const metadata = await parseBuffer(buffer);
     const durationMs = Math.ceil((metadata.format.duration || 2) * 1000) + 300;
@@ -775,7 +774,7 @@ export async function sendVoiceNote(
 
     await page.waitForTimeout(200);
 
-    playAudio("temp_voice_note.wav");
+    playBuffer(buffer);
 
     await page.waitForTimeout(durationMs);
 

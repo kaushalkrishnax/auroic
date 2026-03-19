@@ -6,5 +6,5 @@ dist/
 .env
 package-lock.json
 *.onnx
-*-zh.bin
+*.gguf
 *.wav

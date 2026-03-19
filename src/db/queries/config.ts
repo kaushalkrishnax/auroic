@@ -19,15 +19,13 @@ export interface RuntimeSettingsPayload {
   };
   llm: {
     systemPrompt: string;
-    timeout: number;
     models: { low: string; medium: string; high: string };
-    output: { maxTokens: number };
+    output: { maxTokens: number; timeout: number };
   };
   router: {
-    host: string;
     model: string;
-    systemPrompt?: string;
     think?: boolean;
+    systemPrompt?: string;
     options?: {
       temperature?: number;
       top_p?: number;
@@ -39,10 +37,6 @@ export interface RuntimeSettingsPayload {
     logRouterWindow: boolean;
   };
   instagram: Record<string, unknown>;
-  commands: {
-    enabled?: boolean;
-    queryFilterWords?: string[];
-  };
   tts: {
     voice: string;
     dtype: string;
@@ -72,7 +66,6 @@ export const DEFAULT_RUNTIME_SETTINGS: RuntimeSettingsPayload = {
   llm: {
     systemPrompt:
       "You are Auroic, a real participant in this group chat. Reply naturally like a friend, not an AI.\\n\\nRules:\\n- H1-H5 and C1-C3 are message indexes, not usernames\\n- Reply only about the target message's topic, nothing else\\n- No markdown, plain text only\\n- Keep it short unless detail is clearly needed\\n- Hinglish tone by default, match language if target is in another language",
-    timeout: 30000,
     models: {
       low: "llama-3.1-8b-instant",
       medium: "meta-llama/llama-4-scout-17b-16e-instruct",
@@ -80,16 +73,16 @@ export const DEFAULT_RUNTIME_SETTINGS: RuntimeSettingsPayload = {
     },
     output: {
       maxTokens: 100,
+      timeout: 30000,
     },
   },
   router: {
-    host: "http://localhost:11434",
-    model: "auroic-router-0.6b",
-    systemPrompt:
-      "You are the Auroic Router. Given history messages H1-H5 and candidate messages C1-C3, output exactly one routing decision.\\nAlways choose a decision for @BOT messages never ignore them.",
+    model: "models/auroic-router/auroic-router-0.6b.q8_0.gguf",
     think: true,
+    systemPrompt:
+      "You are the Auroic Router. Given history messages H1-H5 and candidate messages C1-C3, output exactly one routing decision.",
     options: {
-      temperature: 0.5,
+      temperature: 0.6,
       top_p: 1.05,
       top_k: 20,
       repeat_penalty: 1.1,
@@ -99,20 +92,6 @@ export const DEFAULT_RUNTIME_SETTINGS: RuntimeSettingsPayload = {
     logRouterWindow: true,
   },
   instagram: {},
-  commands: {
-    enabled: true,
-    queryFilterWords: [
-      "gif",
-      "gifs",
-      "sticker",
-      "stickers",
-      "media",
-      "meme",
-      "memes",
-      "image",
-      "images",
-    ],
-  },
   tts: {
     voice: "af_nicole",
     dtype: "q8",
@@ -132,7 +111,9 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-function toCommandConfigRow(row: typeof commandsTable.$inferSelect): CommandConfigRow {
+function toCommandConfigRow(
+  row: typeof commandsTable.$inferSelect,
+): CommandConfigRow {
   return {
     command: row.command,
     aliases: normalizeList(row.aliases),
@@ -144,24 +125,38 @@ function toCommandConfigRow(row: typeof commandsTable.$inferSelect): CommandConf
 
 export function getSettingsPayload(): RuntimeSettingsPayload {
   const db = getConfigDB();
-  const row = db.select().from(settingsTable).where(eq(settingsTable.id, 1)).get();
+  const row = db
+    .select()
+    .from(settingsTable)
+    .where(eq(settingsTable.id, 1))
+    .get();
   if (!row) return DEFAULT_RUNTIME_SETTINGS;
 
   return {
-    triggers: (row.triggers as RuntimeSettingsPayload["triggers"]) ?? DEFAULT_RUNTIME_SETTINGS.triggers,
-    llm: (row.llm as RuntimeSettingsPayload["llm"]) ?? DEFAULT_RUNTIME_SETTINGS.llm,
-    router: (row.router as RuntimeSettingsPayload["router"]) ?? DEFAULT_RUNTIME_SETTINGS.router,
-    debug: (row.debug as RuntimeSettingsPayload["debug"]) ?? DEFAULT_RUNTIME_SETTINGS.debug,
-    instagram: (row.instagram as RuntimeSettingsPayload["instagram"]) ?? DEFAULT_RUNTIME_SETTINGS.instagram,
-    commands: (row.commands as RuntimeSettingsPayload["commands"]) ?? DEFAULT_RUNTIME_SETTINGS.commands,
-    tts: (row.tts as RuntimeSettingsPayload["tts"]) ?? DEFAULT_RUNTIME_SETTINGS.tts,
+    triggers:
+      (row.triggers as RuntimeSettingsPayload["triggers"]) ??
+      DEFAULT_RUNTIME_SETTINGS.triggers,
+    llm:
+      (row.llm as RuntimeSettingsPayload["llm"]) ??
+      DEFAULT_RUNTIME_SETTINGS.llm,
+    router:
+      (row.router as RuntimeSettingsPayload["router"]) ??
+      DEFAULT_RUNTIME_SETTINGS.router,
+    debug:
+      (row.debug as RuntimeSettingsPayload["debug"]) ??
+      DEFAULT_RUNTIME_SETTINGS.debug,
+    instagram:
+      (row.instagram as RuntimeSettingsPayload["instagram"]) ??
+      DEFAULT_RUNTIME_SETTINGS.instagram,
+    tts:
+      (row.tts as RuntimeSettingsPayload["tts"]) ??
+      DEFAULT_RUNTIME_SETTINGS.tts,
   };
 }
 
 export function upsertSettingsPayload(payload: RuntimeSettingsPayload): void {
   const db = getConfigDB();
-  db
-    .insert(settingsTable)
+  db.insert(settingsTable)
     .values({
       id: 1,
       triggers: payload.triggers,
@@ -169,7 +164,6 @@ export function upsertSettingsPayload(payload: RuntimeSettingsPayload): void {
       router: payload.router,
       debug: payload.debug,
       instagram: payload.instagram,
-      commands: payload.commands,
       tts: payload.tts,
       updatedAt: nowIso(),
     })
@@ -181,7 +175,6 @@ export function upsertSettingsPayload(payload: RuntimeSettingsPayload): void {
         router: payload.router,
         debug: payload.debug,
         instagram: payload.instagram,
-        commands: payload.commands,
         tts: payload.tts,
         updatedAt: nowIso(),
       },
@@ -229,12 +222,18 @@ export function replaceCommandConfigs(rows: CommandConfigRow[]): void {
 export function ensureConfigSeeded(): void {
   const db = getConfigDB();
 
-  const settingsCount = db.select({ id: settingsTable.id }).from(settingsTable).all().length;
+  const settingsCount = db
+    .select({ id: settingsTable.id })
+    .from(settingsTable)
+    .all().length;
   if (settingsCount === 0) {
     upsertSettingsPayload(DEFAULT_RUNTIME_SETTINGS);
   }
 
-  const commandCount = db.select({ command: commandsTable.command }).from(commandsTable).all().length;
+  const commandCount = db
+    .select({ command: commandsTable.command })
+    .from(commandsTable)
+    .all().length;
   if (commandCount > 0) return;
 
   replaceCommandConfigs(
@@ -261,14 +260,19 @@ export function syncCommandsWithRegistry(): void {
   const db = getConfigDB();
 
   const registryMap = new Map(COMMAND_REGISTRY.map((c) => [c.name, c]));
-  const existingRows = db.select({ command: commandsTable.command }).from(commandsTable).all();
+  const existingRows = db
+    .select({ command: commandsTable.command })
+    .from(commandsTable)
+    .all();
   const existingNames = new Set(existingRows.map((r) => r.command));
 
   // Delete rows whose commands no longer exist in the registry
   for (const { command } of existingRows) {
     if (!registryMap.has(command)) {
       db.delete(commandsTable).where(eq(commandsTable.command, command)).run();
-      logger.info("Removed command from DB (deleted from registry)", { command });
+      logger.info("Removed command from DB (deleted from registry)", {
+        command,
+      });
     }
   }
 
@@ -276,8 +280,7 @@ export function syncCommandsWithRegistry(): void {
   for (const entry of COMMAND_REGISTRY) {
     if (!existingNames.has(entry.name)) {
       // New command: insert with registry values as defaults for editable fields
-      db
-        .insert(commandsTable)
+      db.insert(commandsTable)
         .values({
           command: entry.name,
           aliases: entry.commandWords,
@@ -290,8 +293,7 @@ export function syncCommandsWithRegistry(): void {
       logger.info("Added command to DB from registry", { command: entry.name });
     } else {
       // Existing command: only update the non-editable handlerName
-      db
-        .update(commandsTable)
+      db.update(commandsTable)
         .set({ handlerName: entry.handlerName, updatedAt: nowIso() })
         .where(eq(commandsTable.command, entry.name))
         .run();

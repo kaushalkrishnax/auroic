@@ -1,4 +1,4 @@
-import getConfig from "@/runtime/index.js";
+import { getCommandRows } from "@/runtime/index.js";
 import type {
   ActionContext,
   ActionType,
@@ -37,7 +37,7 @@ function normalizeToken(token: string): string {
 }
 
 function buildCandidates(): CommandSelection[] {
-  const configRows = getConfig().commands.rows;
+  const configRows = getCommandRows();
 
   return configRows
     .filter((row) => row.isEnabled)
@@ -100,9 +100,6 @@ export async function hasCommandTriggerKeyword(text: string): Promise<boolean> {
 }
 
 export async function classifyCommand(text: string): Promise<ClassifiedCommand | null> {
-  const config = getConfig().commands;
-  if (!config.enabled) return null;
-
   const normalizedInput = text.trim();
   if (!normalizedInput) return null;
 
@@ -126,7 +123,6 @@ export async function classifyCommand(text: string): Promise<ClassifiedCommand |
   if (!best) return null;
 
   const stripWords = new Set<string>([
-    ...config.queryFilterWords.map((word) => normalizeToken(word)),
     ...best.candidate.aliases,
     ...best.candidate.filterKeywords,
     ...best.candidate.commandName

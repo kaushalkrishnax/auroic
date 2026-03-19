@@ -13,7 +13,8 @@ import {
 } from "@/db/queries/config.js";
 
 const env = {
-  chromiumProfileDir: process.env.CHROMIUM_PROFILE_DIR ?? "./data/chrome-auroic",
+  chromiumProfileDir:
+    process.env.CHROMIUM_PROFILE_DIR ?? "./data/chrome-auroic",
   aiUrl: process.env.AI_API_URL ?? "https://api.openai.com/v1/chat/completions",
   igChatIds: (process.env.INSTAGRAM_CHAT_IDS ?? "")
     .split(",")
@@ -65,12 +66,7 @@ export function reloadConfig(): boolean {
 export function getConfig() {
   const llm = runtimeSettings.llm;
   const router = runtimeSettings.router;
-  const commands = runtimeSettings.commands;
   const tts = runtimeSettings.tts;
-
-  const queryFilterWords = Array.isArray(commands.queryFilterWords)
-    ? commands.queryFilterWords.map((v) => String(v).toLowerCase())
-    : ["gif", "gifs", "sticker", "stickers", "media", "meme", "memes", "image", "images"];
 
   return {
     chromium: {
@@ -88,35 +84,29 @@ export function getConfig() {
       url: env.aiUrl,
       key: env.aiKey,
       systemPrompt: llm.systemPrompt,
-      timeout: llm.timeout,
       models: llm.models ?? {
         low: "llama-3.1-8b-instant",
         medium: "meta-llama/llama-4-scout-17b-16e-instruct",
         high: "openai/gpt-oss-120b",
       },
-      output: llm.output ?? { maxTokens: 100 },
+      output: llm.output ?? {
+        maxTokens: 100,
+        timeout: 30000,
+      },
     },
     router: {
-      host: router.host ?? "http://localhost:11434",
-      model: router.model ?? "auroic-router-0.6b",
+      model:
+        router.model ?? "models/auroic-router/auroic-router-0.6b.q8_0.gguf",
+      think: router.think ?? true,
       systemPrompt:
         router.systemPrompt ??
         "You are the Auroic Router. Given history messages H1-H5 and candidate messages C1-C3, output exactly one routing decision.",
-      think: router.think ?? true,
       options: router.options ?? {
         temperature: 0.5,
         top_p: 1.05,
         top_k: 20,
         repeat_penalty: 1.1,
       },
-    },
-    commands: {
-      enabled: Boolean(commands.enabled ?? true),
-      queryFilterWords,
-      rows: commandRows,
-      filterWords: Object.fromEntries(
-        commandRows.map((row) => [row.command, row.filterKeywords]),
-      ),
     },
     debug: {
       logRouterWindow: runtimeSettings.debug.logRouterWindow ?? true,
@@ -134,6 +124,10 @@ export function getConfig() {
     db: { path: env.dbPath },
     configDb: { path: env.configDbPath },
   };
+}
+
+export function getCommandRows(): CommandConfigRow[] {
+  return commandRows;
 }
 
 export type Config = ReturnType<typeof getConfig>;

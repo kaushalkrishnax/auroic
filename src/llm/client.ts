@@ -24,7 +24,7 @@ export async function chatCompletion(
   const config = getConfig();
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), config.llm.timeout);
+  const timer = setTimeout(() => controller.abort(), config.llm.output.timeout);
 
   try {
     const res = await fetch(config.llm.url, {
