@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  auroic:
+    build: .
+    container_name: auroic
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - .env
+    volumes:
+      # Persistent data directory (SQLite databases, Chrome profile)
+      - ./data:/app/data
+      # Model files (router and TTS)
+      - ./models:/app/models
+    environment:
+      - NODE_ENV=production
+      - DB_PATH=/app/data/state.db
+      - CONFIG_DB_PATH=/app/data/config.db
+      - PROFILE_DIR=/app/data/chrome-auroic
+    ports:
+      - "3789:3789"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3789/api/conversations"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
