@@ -63,35 +63,93 @@ export const DEFAULT_RUNTIME_SETTINGS: RuntimeSettingsPayload = {
       cooldownMs: 5000,
     },
   },
+
   llm: {
-    systemPrompt:
-      "You are Auroic, a real participant in this group chat. Reply naturally like a friend, not an AI.\\n\\nRules:\\n- H1-H5 and C1-C3 are message indexes, not usernames\\n- Reply only about the target message's topic, nothing else\\n- No markdown, plain text only\\n- Keep it short unless detail is clearly needed\\n- Hinglish tone by default, match language if target is in another language",
+    systemPrompt: `You are Auroic, an actual participant in this group chat. You are replying to ONE specific target message.
+
+INPUT STRUCTURE
+- Msg 1 – Msg 20: past conversation (user: / assistant:)
+- TARGET: the exact message you must reply to
+
+CORE RULE
+Your reply must be primarily about the TARGET message.
+History is only for context. Do not shift focus unless necessary.
+
+BEHAVIOR
+- Reply like a normal friend
+- Hinglish by default, match language if needed
+- Keep it short and natural
+- No markdown
+
+FOCUS RULES
+- Do NOT reply to entire conversation
+- Do NOT summarize
+- Do NOT bring unrelated topics
+- Do NOT mix intents
+
+If TARGET is clear → respond directly  
+If vague → ask short clarification
+
+CONTEXT USAGE
+Use history only if it helps TARGET.
+Recent > older.
+
+STYLE
+- Casual, human
+- No over-explaining
+- No assistant tone
+
+ANTI-FAIL
+- No generic replies
+- No repetition
+- No topic switching
+
+OUTPUT
+Single natural message only.`,
     models: {
-      low: "llama-3.1-8b-instant",
-      medium: "meta-llama/llama-4-scout-17b-16e-instruct",
+      low: "llama-3.3-70b-versatile",
+      medium: "openai/gpt-oss-20b",
       high: "openai/gpt-oss-120b",
     },
+
     output: {
       maxTokens: 100,
       timeout: 30000,
     },
   },
+
   router: {
     model: "models/auroic-router/auroic-router-0.6b.q8_0.gguf",
     think: true,
-    systemPrompt:
-      "You are the Auroic Router. Given history messages H1-H5 and candidate messages C1-C3, output exactly one routing decision.",
+    systemPrompt: `You are the Auroic Router.
+
+Given:
+- H1–H5 (history)
+- C1–C3 (candidate messages)
+
+Select exactly one routing decision.
+
+Process internally:
+1. Identify intent of latest candidate
+2. Compare all candidates
+3. Reject weaker ones
+4. Choose best
+
+Output the best decision.`,
     options: {
       temperature: 0.6,
-      top_p: 1.05,
+      top_p: 1.0,
       top_k: 20,
       repeat_penalty: 1.1,
     },
   },
+
   debug: {
     logRouterWindow: true,
   },
+
   instagram: {},
+
   tts: {
     voice: "af_nicole",
     dtype: "q8",
@@ -102,7 +160,7 @@ function normalizeList(values: unknown): string[] {
   if (!Array.isArray(values)) return [];
   return [
     ...new Set(
-      values.map((value) => String(value).trim().toLowerCase()).filter(Boolean),
+      values.map((v) => String(v).trim().toLowerCase()).filter(Boolean),
     ),
   ];
 }
@@ -130,52 +188,32 @@ export function getSettingsPayload(): RuntimeSettingsPayload {
     .from(settingsTable)
     .where(eq(settingsTable.id, 1))
     .get();
+
   if (!row) return DEFAULT_RUNTIME_SETTINGS;
 
   return {
-    triggers:
-      (row.triggers as RuntimeSettingsPayload["triggers"]) ??
-      DEFAULT_RUNTIME_SETTINGS.triggers,
-    llm:
-      (row.llm as RuntimeSettingsPayload["llm"]) ??
-      DEFAULT_RUNTIME_SETTINGS.llm,
-    router:
-      (row.router as RuntimeSettingsPayload["router"]) ??
-      DEFAULT_RUNTIME_SETTINGS.router,
-    debug:
-      (row.debug as RuntimeSettingsPayload["debug"]) ??
-      DEFAULT_RUNTIME_SETTINGS.debug,
-    instagram:
-      (row.instagram as RuntimeSettingsPayload["instagram"]) ??
-      DEFAULT_RUNTIME_SETTINGS.instagram,
-    tts:
-      (row.tts as RuntimeSettingsPayload["tts"]) ??
-      DEFAULT_RUNTIME_SETTINGS.tts,
+    triggers: (row.triggers as any) ?? DEFAULT_RUNTIME_SETTINGS.triggers,
+    llm: (row.llm as any) ?? DEFAULT_RUNTIME_SETTINGS.llm,
+    router: (row.router as any) ?? DEFAULT_RUNTIME_SETTINGS.router,
+    debug: (row.debug as any) ?? DEFAULT_RUNTIME_SETTINGS.debug,
+    instagram: (row.instagram as any) ?? DEFAULT_RUNTIME_SETTINGS.instagram,
+    tts: (row.tts as any) ?? DEFAULT_RUNTIME_SETTINGS.tts,
   };
 }
 
 export function upsertSettingsPayload(payload: RuntimeSettingsPayload): void {
   const db = getConfigDB();
+
   db.insert(settingsTable)
     .values({
       id: 1,
-      triggers: payload.triggers,
-      llm: payload.llm,
-      router: payload.router,
-      debug: payload.debug,
-      instagram: payload.instagram,
-      tts: payload.tts,
+      ...payload,
       updatedAt: nowIso(),
     })
     .onConflictDoUpdate({
       target: settingsTable.id,
       set: {
-        triggers: payload.triggers,
-        llm: payload.llm,
-        router: payload.router,
-        debug: payload.debug,
-        instagram: payload.instagram,
-        tts: payload.tts,
+        ...payload,
         updatedAt: nowIso(),
       },
     })
@@ -184,23 +222,22 @@ export function upsertSettingsPayload(payload: RuntimeSettingsPayload): void {
 
 export function getCommandConfigs(): CommandConfigRow[] {
   const db = getConfigDB();
-  const rows = db.select().from(commandsTable).all();
-  return rows.map(toCommandConfigRow);
+  return db.select().from(commandsTable).all().map(toCommandConfigRow);
 }
 
 export function replaceCommandConfigs(rows: CommandConfigRow[]): void {
   const db = getConfigDB();
   db.delete(commandsTable).run();
 
-  if (rows.length === 0) return;
+  if (!rows.length) return;
 
-  // Deduplicate aliases globally — first command to claim an alias wins
-  const seenAliases = new Set<string>();
+  const seen = new Set<string>();
+
   const deduped = rows.map((row) => ({
     ...row,
-    aliases: normalizeList(row.aliases).filter((alias) => {
-      if (seenAliases.has(alias)) return false;
-      seenAliases.add(alias);
+    aliases: normalizeList(row.aliases).filter((a) => {
+      if (seen.has(a)) return false;
+      seen.add(a);
       return true;
     }),
   }));
@@ -208,11 +245,8 @@ export function replaceCommandConfigs(rows: CommandConfigRow[]): void {
   db.insert(commandsTable)
     .values(
       deduped.map((row) => ({
-        command: row.command,
-        aliases: row.aliases,
+        ...row,
         filterKeywords: normalizeList(row.filterKeywords),
-        handlerName: row.handlerName,
-        isEnabled: row.isEnabled,
         updatedAt: nowIso(),
       })),
     )
@@ -222,64 +256,48 @@ export function replaceCommandConfigs(rows: CommandConfigRow[]): void {
 export function ensureConfigSeeded(): void {
   const db = getConfigDB();
 
-  const settingsCount = db
-    .select({ id: settingsTable.id })
-    .from(settingsTable)
-    .all().length;
-  if (settingsCount === 0) {
+  if (
+    db.select({ id: settingsTable.id }).from(settingsTable).all().length === 0
+  ) {
     upsertSettingsPayload(DEFAULT_RUNTIME_SETTINGS);
   }
 
-  const commandCount = db
-    .select({ command: commandsTable.command })
-    .from(commandsTable)
-    .all().length;
-  if (commandCount > 0) return;
+  if (
+    db.select({ command: commandsTable.command }).from(commandsTable).all()
+      .length > 0
+  )
+    return;
 
   replaceCommandConfigs(
-    COMMAND_REGISTRY.map((entry) => ({
-      command: entry.name,
-      aliases: entry.commandWords,
-      filterKeywords: entry.commandWords,
-      handlerName: entry.handlerName,
+    COMMAND_REGISTRY.map((e) => ({
+      command: e.name,
+      aliases: e.commandWords,
+      filterKeywords: e.commandWords,
+      handlerName: e.handlerName,
       isEnabled: true,
     })),
   );
 }
 
-/**
- * Reconciles the commands table with COMMAND_REGISTRY on every startup.
- *
- * Rules:
- * - Commands removed from the registry are deleted from the DB.
- * - Commands added to the registry are inserted with defaults for editable fields.
- * - Editable fields (aliases, filterKeywords, isEnabled) are never overwritten.
- * - Non-editable field (handlerName) is kept in sync with the registry.
- */
 export function syncCommandsWithRegistry(): void {
   const db = getConfigDB();
 
   const registryMap = new Map(COMMAND_REGISTRY.map((c) => [c.name, c]));
-  const existingRows = db
-    .select({ command: commandsTable.command })
-    .from(commandsTable)
-    .all();
-  const existingNames = new Set(existingRows.map((r) => r.command));
+  const existing = db.select().from(commandsTable).all();
 
-  // Delete rows whose commands no longer exist in the registry
-  for (const { command } of existingRows) {
-    if (!registryMap.has(command)) {
-      db.delete(commandsTable).where(eq(commandsTable.command, command)).run();
-      logger.info("Removed command from DB (deleted from registry)", {
-        command,
-      });
+  for (const row of existing) {
+    if (!registryMap.has(row.command)) {
+      db.delete(commandsTable)
+        .where(eq(commandsTable.command, row.command))
+        .run();
+      logger.info("Removed command", { command: row.command });
     }
   }
 
-  // Insert or update-non-editable-fields for registry commands
   for (const entry of COMMAND_REGISTRY) {
-    if (!existingNames.has(entry.name)) {
-      // New command: insert with registry values as defaults for editable fields
+    const exists = existing.find((r) => r.command === entry.name);
+
+    if (!exists) {
       db.insert(commandsTable)
         .values({
           command: entry.name,
@@ -290,11 +308,14 @@ export function syncCommandsWithRegistry(): void {
           updatedAt: nowIso(),
         })
         .run();
-      logger.info("Added command to DB from registry", { command: entry.name });
+
+      logger.info("Added command", { command: entry.name });
     } else {
-      // Existing command: only update the non-editable handlerName
       db.update(commandsTable)
-        .set({ handlerName: entry.handlerName, updatedAt: nowIso() })
+        .set({
+          handlerName: entry.handlerName,
+          updatedAt: nowIso(),
+        })
         .where(eq(commandsTable.command, entry.name))
         .run();
     }

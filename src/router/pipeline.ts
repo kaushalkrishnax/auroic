@@ -174,7 +174,7 @@ function scheduleCandidateProcessing(chatId: string, state: ConversationState): 
 }
 
 function getHistoryForModels(history: ConversationHistoryEntry[]): string[] {
-  return history.slice(-10).map((h) => `${h.role}: ${h.content}`);
+  return history.slice(-20).map((h) => h.content);
 }
 
 function appendHistoryPair(
@@ -186,7 +186,7 @@ function appendHistoryPair(
     { role: "user", content: userContent },
     { role: "assistant", content: assistantContent },
   );
-  state.history = state.history.slice(-10);
+  state.history = state.history.slice(-20);
 }
 
 function getPassiveMonitoringConfig() {
@@ -372,7 +372,7 @@ async function processPassiveBatch(chatId: string): Promise<void> {
       .slice(0, Math.max(0, firstCandidateIdx))
       .slice(-HISTORY_SIZE);
 
-    const modelHistory = historyWindow.map((m) => `user: ${m.textContent ?? ""}`);
+    const modelHistory = historyWindow.map((m) => m.textContent ?? "");
     const candidateTexts = candidateMessages.map((m) => m.textContent ?? "");
     const { routerCandidates, slotToCandidateIndex } =
       buildRouterCandidateSlots(candidateTexts);

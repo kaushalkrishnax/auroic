@@ -20,16 +20,16 @@ export async function generateReply(
   const systemPrompt = config.llm.systemPrompt;
 
   const h = [...history];
-  while (h.length < 5) h.unshift("...");
+  while (h.length < 20) h.unshift("...");
 
-  const historyText = h.map((msg, i) => `H${i + 1}: ${msg}`).join("\n");
+  const historyText = h.map((msg, i) => `Msg ${i + 1}: ${msg}`).join("\n");
   const targetText = candidates[0] ?? "";
+
+  const contextPrompt = `Here are the last 20 messages from the conversation:\n\n${historyText}\n\n---\n\nTarget message to reply to:\n${targetText}`;
 
   const messages: ChatMessage[] = [
     { role: "system", content: systemPrompt },
-    { role: "user", content: historyText },
-    { role: "assistant", content: "ok" },
-    { role: "user", content: targetText },
+    { role: "user", content: contextPrompt },
   ];
 
   logger.info("LLM generate", { model, effort });
