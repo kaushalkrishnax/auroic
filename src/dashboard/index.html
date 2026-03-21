@@ -1952,6 +1952,21 @@
           openChatDetail(r.dataset.chatClick),
         ),
       );
+      el.querySelectorAll("[data-chat-enable-wrap]").forEach((node) =>
+        node.addEventListener("click", (e) => e.stopPropagation()),
+      );
+      el.querySelectorAll("[data-chat-enable]").forEach((inputEl) =>
+        inputEl.addEventListener("click", (e) => e.stopPropagation()),
+      );
+      el.querySelectorAll("[data-chat-enable]").forEach((inputEl) =>
+        inputEl.addEventListener("change", (e) => {
+          const target = e.currentTarget;
+          if (!(target instanceof HTMLInputElement)) return;
+          const chatId = target.dataset.chatEnable;
+          if (!chatId) return;
+          setChatEnabled(chatId, target.checked, target);
+        }),
+      );
       el.querySelectorAll("[data-live-chat-click]").forEach((r) =>
         r.addEventListener("click", () =>
           setLiveChat(r.dataset.liveChatClick),
@@ -2008,6 +2023,14 @@
     }
 
     function renderChats() {
+      const enabledChatIds = new Set(
+        Array.isArray(state.config?.instagram?.chatIds)
+          ? state.config.instagram.chatIds
+            .map((value) => String(value).trim())
+            .filter(Boolean)
+          : [],
+      );
+      const hasExplicitEnabledFilter = enabledChatIds.size > 0;
       const rows = state.conversations.filter(
         (c) =>
           !state.search ||
@@ -2017,11 +2040,17 @@
       if (!rows.length)
         return `<div class="empty">No conversations found</div>`;
       return `<div class="card"><table>
-    <thead><tr><th>Chat ID</th><th>Title</th><th>Group</th><th>Muted</th><th>Last Processed MID</th></tr></thead>
+    <thead><tr><th>Enabled</th><th>Chat ID</th><th>Title</th><th>Group</th><th>Muted</th><th>Last Processed MID</th></tr></thead>
     <tbody>${rows
           .map(
             (c) => `
       <tr data-chat-click="${esc(c.conversationId)}" style="cursor:pointer">
+        <td style="text-align:center" data-chat-enable-wrap>
+          <label class="toggle">
+            <input data-chat-enable="${esc(c.conversationId)}" type="checkbox" ${(!hasExplicitEnabledFilter || enabledChatIds.has(c.conversationId)) ? "checked" : ""} />
+            <span class="slider"></span>
+          </label>
+        </td>
         <td>${esc(c.conversationId)}</td>
         <td>${esc(c.title || "—")}</td>
         <td>${c.isGroup ? "✓" : "—"}</td>
@@ -2928,6 +2957,63 @@
         showToast("Config saved");
       } catch (e) {
         showToast("Save failed: " + e.message);
+      }
+    }
+
+    async function setChatEnabled(chatId, isEnabled, inputEl) {
+      if (!state.config || typeof state.config !== "object") {
+        showToast("Config not loaded yet");
+        if (inputEl) inputEl.checked = !isEnabled;
+        return;
+      }
+
+      const prevIds = Array.isArray(state.config?.instagram?.chatIds)
+        ? state.config.instagram.chatIds
+          .map((value) => String(value).trim())
+          .filter(Boolean)
+        : [];
+
+      const allConversationIds = [...new Set(
+        (state.conversations || [])
+          .map((c) => String(c.conversationId || "").trim())
+          .filter(Boolean),
+      )];
+
+      const hasExplicitEnabledFilter = prevIds.length > 0;
+      const baseIds = hasExplicitEnabledFilter
+        ? prevIds
+        : allConversationIds;
+
+      const nextIds = isEnabled
+        ? [...new Set([...baseIds, chatId])]
+        : baseIds.filter((id) => id !== chatId);
+
+      const normalizedNextIds =
+        allConversationIds.length > 0 && nextIds.length >= allConversationIds.length
+          ? []
+          : nextIds;
+
+      const nextConfig = JSON.parse(JSON.stringify(state.config));
+      if (!nextConfig.instagram || typeof nextConfig.instagram !== "object") {
+        nextConfig.instagram = {};
+      }
+      nextConfig.instagram.chatIds = normalizedNextIds;
+
+      try {
+        const r = await fetch("/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(nextConfig),
+        });
+        const payload = await r.json().catch(() => null);
+        if (!r.ok) throw new Error(payload?.error || `HTTP ${r.status}`);
+
+        state.config = nextConfig;
+        state.configDirty = false;
+        showToast(`Chat ${isEnabled ? "enabled" : "disabled"}`);
+      } catch (err) {
+        if (inputEl) inputEl.checked = !isEnabled;
+        showToast("Failed to update chat: " + (err?.message || String(err)));
       }
     }
 

@@ -2,27 +2,70 @@ version: '3.8'
 
 services:
   auroic:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Passes CPU instruction set optimization to node-llama-cpp compile
+        CMAKE_BUILD_PARALLEL_LEVEL: "2"
+        LLAMA_NATIVE: "1"
+    image: auroic:latest
     container_name: auroic
     restart: unless-stopped
+
+    # network_mode: host and ports: are mutually exclusive.
+    # host mode is fine for local, but breaks on HF Spaces.
+    # Keeping ports: mapping so it works in both environments.
+    # Remove network_mode if deploying to HF Spaces.
     network_mode: host
+
     env_file:
       - .env
-    volumes:
-      # Persistent data directory (SQLite databases, Chrome profile)
-      - ./data:/app/data
-      # Model files (router and TTS)
-      - ./models:/app/models
+
     environment:
       - NODE_ENV=production
       - DB_PATH=/app/data/state.db
       - CONFIG_DB_PATH=/app/data/config.db
       - PROFILE_DIR=/app/data/chrome-auroic
+      # PipeWire needs a runtime dir — without this pw-play fails silently
+      - XDG_RUNTIME_DIR=/tmp/runtime-auroic
+      # Prevents node-llama-cpp from trying to recompile at runtime
+      - NODE_LLAMA_CPP_SKIP_DOWNLOAD=true
+      # Cap Node.js heap to prevent OOM — leaves headroom for Chromium + ONNX
+      - NODE_OPTIONS=--max-old-space-size=512
+
+    volumes:
+      # Persistent data (SQLite, Chrome profile)
+      - ./data:/app/data
+      # Model files (GGUF router model + Kokoro TTS)
+      - ./models:/app/models
+      # PipeWire runtime socket — needed for pw-play TTS audio
+      - /run/user/1000/pipewire-0:/run/user/1000/pipewire-0:ro
+      # /tmp for WAV temp files written by tts.ts playBuffer()
+      - /tmp:/tmp
+
+    # Resource limits — prevents Chromium from consuming all RAM on spikes
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+        reservations:
+          memory: 1G
+
     ports:
       - "3789:3789"
+
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3789/api/conversations"]
+      # curl not guaranteed in slim image — use wget which is always present
+      # Also check /health instead of /api/conversations which hits the DB
+      test: ["CMD", "wget", "-qO-", "http://localhost:3789/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 60s   # increased: model load takes longer than 40s cold start
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

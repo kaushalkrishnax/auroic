@@ -1,3 +1,13 @@
+---
+title: Auroic
+emoji: 🤖
+colorFrom: blue
+colorTo: purple
+sdk: docker
+pinned: false
+app_port: 3789
+---
+
 # Auroic — Instagram AI Assistant
 
 > **⚠️ Beta Version** — This project is under active development. Features may change, and some edge cases are still being refined.

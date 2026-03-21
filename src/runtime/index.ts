@@ -16,10 +16,6 @@ const env = {
   chromiumProfileDir:
     process.env.CHROMIUM_PROFILE_DIR ?? "./data/chrome-auroic",
   aiUrl: process.env.AI_API_URL ?? "https://api.openai.com/v1/chat/completions",
-  igChatIds: (process.env.INSTAGRAM_CHAT_IDS ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean),
   aiKey: process.env.AI_API_KEY ?? "",
   igUsername: process.env.INSTAGRAM_USERNAME ?? "",
   igPassword: process.env.INSTAGRAM_PASSWORD ?? "",
@@ -70,17 +66,23 @@ export function getConfig() {
   const llm = runtimeSettings.llm;
   const router = runtimeSettings.router;
   const tts = runtimeSettings.tts;
+  const igSettings = (runtimeSettings.instagram ?? {}) as Record<string, unknown>;
+  const igChatIds = Array.isArray(igSettings.chatIds)
+    ? igSettings.chatIds
+        .map((value) => String(value).trim())
+        .filter(Boolean)
+    : [];
 
   return {
     chromium: {
       profileDir: env.chromiumProfileDir,
     },
     instagram: {
-      ...(runtimeSettings.instagram as Record<string, unknown>),
+      ...igSettings,
       fbId: BOT_FBID,
       username: env.igUsername,
       password: env.igPassword,
-      chatIds: env.igChatIds,
+      chatIds: igChatIds,
     },
     triggers: runtimeSettings.triggers,
     llm: {

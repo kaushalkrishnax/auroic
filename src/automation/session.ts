@@ -198,7 +198,15 @@ export async function initInstagramSession(): Promise<void> {
 
   const config = getConfig();
   const chatId = config.instagram.chatIds[0];
-  const chatUrl = `https://www.instagram.com/direct/t/${chatId}/`;
+  const chatUrl = chatId
+    ? `https://www.instagram.com/direct/t/${chatId}/`
+    : "https://www.instagram.com/direct/inbox/";
+
+  if (!chatId) {
+    logger.warn(
+      "No enabled Instagram chat IDs in config.db; opening inbox without thread target",
+    );
+  }
 
   logger.info("Opening Instagram session…", { chatId });
 

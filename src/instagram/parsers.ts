@@ -272,7 +272,7 @@ export function parseWebsocketFrame(
       case "SlideUQPPNewMessage": {
         const msg = event.message as RawIGMessage;
 
-        if (allowedChatIds && !allowedChatIds.includes(msg.thread_fbid))
+        if (allowedChatIds?.length && !allowedChatIds.includes(msg.thread_fbid))
           continue;
 
         parseMessage(msg);
