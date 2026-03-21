@@ -35,24 +35,26 @@ export async function connectBrowser(): Promise<{ context: BrowserContext }> {
   logger.info("Launching headless Chromium…", { profileDir });
 
   const context = await chromium.launchPersistentContext(profileDir, {
-    headless: true,
-    args: [
-      "--no-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--disable-background-networking",
-      "--disable-background-timer-throttling",
-      "--disable-renderer-backgrounding",
-      "--disable-sync",
-      "--no-first-run",
-      "--disable-default-apps",
-      "--disable-component-update",
-      "--blink-settings=imagesEnabled=false",
-      "--use-fake-ui-for-media-stream",
-      "--allow-file-access-from-files",
-    ],
-    permissions: ["microphone"],
-  });
+  headless: true,
+  args: [
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage",
+    "--disable-gpu",
+    "--disable-background-timer-throttling",
+    "--disable-renderer-backgrounding",
+    "--disable-sync",
+    "--no-first-run",
+    "--disable-default-apps",
+    "--disable-component-update",
+    "--blink-settings=imagesEnabled=false",
+    "--use-fake-ui-for-media-stream",
+    "--allow-file-access-from-files",
+    "--disable-extensions",
+    "--mute-audio",
+  ],
+  permissions: ["microphone"],
+});
 
   context.on("close", () => {
     logger.warn("Browser context closed");
