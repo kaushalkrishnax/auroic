@@ -4,7 +4,6 @@ dist/
 .env
 *.log
 .env
-package-lock.json
 *.onnx
 *.gguf
 *.wav
