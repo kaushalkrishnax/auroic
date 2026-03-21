@@ -1,6 +1,10 @@
 declare module "ollama" {
-  export interface GenerateOptions {
+  export interface ClientConfig {
     host?: string;
+    headers?: Record<string, string>;
+  }
+
+  export interface GenerateOptions {
     model: string;
     prompt: string;
     system?: string;
@@ -12,9 +16,12 @@ declare module "ollama" {
     response: string;
   }
 
-  const client: {
+  export class Ollama {
+    constructor(config?: ClientConfig);
     generate: (options: GenerateOptions) => Promise<GenerateResponse>;
-  };
+  }
+
+  const client: Ollama;
 
   export default client;
 }

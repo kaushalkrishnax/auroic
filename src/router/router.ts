@@ -3,7 +3,7 @@
  * Uses Ollama generate API with a serialized request queue.
  */
 
-import ollama from "ollama";
+import { Ollama } from "ollama";
 import getConfig from "@/runtime/index.js";
 import logger from "@/utils/logger.js";
 import type { RouterDecision, ActionType, EffortLevel } from "@/types/index.js";
@@ -16,6 +16,97 @@ const RE_C_SLOT = /C(\d+)/i;
 const RE_MENTION = /@\S+/g;
 const RE_MENTION_KEEP_BOT = /@(?!BOT\b)\S+/gi;
 const RE_SPACES = /\s{2,}/g;
+
+const ollamaClients = new Map<string, Ollama>();
+
+interface RouterGenerateResponse {
+  response?: string;
+  error?: string;
+}
+
+function normalizeRouterHost(rawHost: string): string {
+  const trimmed = rawHost.trim();
+  if (!trimmed) return "http://127.0.0.1:11434";
+
+  const noTrailing = trimmed.replace(/\/+$/, "");
+  if (/^https?:\/\//i.test(noTrailing)) return noTrailing;
+
+  if (/^(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?$/i.test(noTrailing)) {
+    return `http://${noTrailing}`;
+  }
+
+  return `https://${noTrailing}`;
+}
+
+function buildGenerateEndpoints(host: string): string[] {
+  const normalized = normalizeRouterHost(host);
+  const lower = normalized.toLowerCase();
+
+  if (lower.endsWith("/api/generate")) {
+    return [normalized];
+  }
+
+  return [
+    `${normalized}/api/generate`,
+    `${normalized}/ollama/api/generate`,
+  ];
+}
+
+async function generateViaHttpFallback(
+  endpoints: string[],
+  payload: {
+    model: string;
+    prompt: string;
+    system: string;
+    options: Record<string, number>;
+  },
+): Promise<string> {
+  const failures: string[] = [];
+
+  for (const endpoint of endpoints) {
+    try {
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...payload,
+          stream: false,
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.text();
+        failures.push(`${endpoint} -> HTTP ${res.status}: ${body}`);
+        continue;
+      }
+
+      const data = (await res.json()) as RouterGenerateResponse;
+      if (typeof data.response !== "string") {
+        failures.push(
+          `${endpoint} -> ${data.error ?? "Missing response in payload"}`,
+        );
+        continue;
+      }
+
+      return data.response.trim();
+    } catch (err) {
+      const error = err as Error;
+      failures.push(`${endpoint} -> ${error.message}`);
+    }
+  }
+
+  throw new Error(failures.join(" | "));
+}
+
+function getOllamaClient(host: string): Ollama {
+  const normalizedHost = normalizeRouterHost(host);
+  const cached = ollamaClients.get(normalizedHost);
+  if (cached) return cached;
+
+  const client = new Ollama({ host: normalizedHost });
+  ollamaClients.set(normalizedHost, client);
+  return client;
+}
 
 // Request queue — mirrors Ollama's serial inference queu
 let _inferRunning = false;
@@ -173,6 +264,7 @@ export async function invokeRouter(
     const model = config.router.model;
     const systemPrompt = config.router.systemPrompt;
     const think = config.router.think;
+    const ollama = getOllamaClient(host);
 
     const prompt = buildPrompt(formattedWindow, think);
     const generationOptions = buildGenerationOptions(
@@ -180,21 +272,48 @@ export async function invokeRouter(
       {},
     );
 
-    const response = await ollama.generate({
-      host,
-      model,
-      prompt,
-      system: systemPrompt,
-      options: generationOptions,
-      stream: false,
-    });
-    const raw = response.response.trim();
+    let raw: string;
+    try {
+      const response = await ollama.generate({
+        model,
+        prompt,
+        system: systemPrompt,
+        options: generationOptions,
+        stream: false,
+      });
+      raw = response.response.trim();
+    } catch (sdkErr) {
+      logger.warn("Router SDK call failed, trying direct HTTP fallback", {
+        host: normalizeRouterHost(host),
+        model,
+        error: (sdkErr as Error).message,
+      });
+
+      raw = await generateViaHttpFallback(buildGenerateEndpoints(host), {
+        model,
+        prompt,
+        system: systemPrompt,
+        options: generationOptions,
+      });
+    }
+
     logger.info("Router raw output:\n" + raw);
 
     return parseRouterOutput(raw);
   } catch (err) {
+    const error = err as Error & {
+      cause?: {
+        code?: string;
+        message?: string;
+      };
+    };
+
     logger.error("Router invocation failed — ignoring", {
-      error: (err as Error).message,
+      host: config.router.hostUrl,
+      model: config.router.model,
+      error: error.message,
+      causeCode: error.cause?.code ?? null,
+      causeMessage: error.cause?.message ?? null,
     });
     return {
       type: "ignore",
