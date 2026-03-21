@@ -38,13 +38,6 @@ const commandHandlers = {
     });
   },
 
-  async sendImage(context: ActionContext) {
-    console.log(
-      `[Command:sendImage] Query: "${context.classifiedCommand!.query}" in ${context.chatId} for ${context.targetMessageId}`,
-    );
-    // TODO: Implement image generation and send logic
-  },
-
   async sendSticker(context: ActionContext) {
     const title = context.classifiedCommand!.query.trim() || "funny";
     const sent = await sendSticker(
@@ -97,12 +90,6 @@ const commandHandlers = {
     });
   },
 
-  async searchweb(context: ActionContext) {
-    console.log(
-      `[Command:searchweb] Query: "${context.classifiedCommand!.query}" in ${context.chatId} for ${context.targetMessageId}`,
-    );
-    // TODO: Implement search within conversation
-  },
 };
 
 /**
@@ -116,14 +103,6 @@ export const COMMAND_REGISTRY: CommandDefinition[] = [
     description: "Send a GIF matching the query",
     commandWords: ["gif", "meme"],
     handler: commandHandlers.sendGif,
-  },
-  {
-    name: "send_image",
-    handlerName: "sendImage",
-    actionType: "media",
-    description: "Generate and send an image",
-    commandWords: ["create", "pic", "picture", "generate"],
-    handler: commandHandlers.sendImage,
   },
   {
     name: "send_sticker",
@@ -148,14 +127,6 @@ export const COMMAND_REGISTRY: CommandDefinition[] = [
     description: "Find and play a music track",
     commandWords: ["play", "music", "song"],
     handler: commandHandlers.playMusic,
-  },
-  {
-    name: "search_web",
-    handlerName: "searchweb",
-    actionType: "text",
-    description: "Search the web and return a text response",
-    commandWords: ["search", "find", "web"],
-    handler: commandHandlers.searchweb,
   },
 ];
 
