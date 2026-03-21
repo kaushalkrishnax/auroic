@@ -19,17 +19,28 @@ export interface KokoroTtsOptions {
   defaultVoice: KokoroVoice;
 }
 
+// Singletons
 let session: ort.InferenceSession | null = null;
 let loadedModelPath: string | null = null;
 let loadedDtype: KokoroDtype | null = null;
-let vocab: Record<string, number> | null = null;
 
-// ── Vocab cache ───────────────────────────────────────────────────────────────
+// Caches — loaded once, never reloaded
+let _vocab: Record<string, number> | null = null;
 let _vocabSet: Set<string> | null = null;
-
-// ── CMU dict cache ────────────────────────────────────────────────────────────
 let _cmuDict: Record<string, string> | null = null;
 
+// Voice style cache — file I/O is expensive, cache all loaded voices
+const _voiceStyleCache = new Map<string, Float32Array>();
+
+// WAV encode reuse buffer — avoids re-allocating on every TTS call
+// Sized for ~30s of audio at 24kHz = 720000 samples = 1.44MB + 44 header
+let _wavBuf: Buffer | null = null;
+
+// Concurrent TTS guard — ONNX session is not thread-safe
+let _ttsRunning = false;
+const _ttsQueue: Array<() => void> = [];
+
+// Static lookup tables (module-level, zero allocation cost)
 const ARPABET_TO_IPA: Record<string, string> = {
   AA: "ɑ",
   AE: "æ",
@@ -72,10 +83,36 @@ const ARPABET_TO_IPA: Record<string, string> = {
   ZH: "ʒ",
 };
 
-// Common Hinglish / Indian slang phonetic map
-// These are approximate IPA representations good enough for Kokoro
+const LETTER_IPA: Record<string, string> = {
+  a: "eɪ",
+  b: "biː",
+  c: "siː",
+  d: "diː",
+  e: "iː",
+  f: "ɛf",
+  g: "dʒiː",
+  h: "eɪtʃ",
+  i: "aɪ",
+  j: "dʒeɪ",
+  k: "keɪ",
+  l: "ɛl",
+  m: "ɛm",
+  n: "ɛn",
+  o: "oʊ",
+  p: "piː",
+  q: "kjuː",
+  r: "ɑːɹ",
+  s: "ɛs",
+  t: "tiː",
+  u: "juː",
+  v: "viː",
+  w: "dʌbəljuː",
+  x: "ɛks",
+  y: "waɪ",
+  z: "ziː",
+};
+
 const HINGLISH_PHONETIC: Record<string, string> = {
-  // greetings / common
   haan: "hɑːn",
   nahi: "nəhɪ",
   nah: "nɑː",
@@ -132,7 +169,6 @@ const HINGLISH_PHONETIC: Record<string, string> = {
   usse: "ʊsseː",
   isko: "ɪskoː",
   unko: "ʊnkoː",
-  // expressions
   ugh: "ʌɡ",
   omg: "oʊ ɛm dʒiː",
   lol: "lɔl",
@@ -161,36 +197,25 @@ const HINGLISH_PHONETIC: Record<string, string> = {
   lemme: "lɛmi",
   gimme: "ɡɪmi",
   tryna: "tɹaɪnə",
+  // extra common Indian names / words
+  didi: "diːdiː",
+  nana: "nɑːnɑː",
+  nani: "nɑːniː",
+  dada: "dɑːdɑː",
+  dadi: "dɑːdiː",
+  chacha: "tʃɑːtʃɑː",
+  chachi: "tʃɑːtʃiː",
+  mama: "mɑːmɑː",
+  mami: "mɑːmiː",
+  beta: "beːtɑː",
+  beti: "beːtiː",
+  bhaiya: "bʱɛːjɑː",
+  ji: "dʒiː",
+  modiji: "moːdiː dʒiː",
+  india: "ɪndiə",
+  bharat: "bʱɑːɹət",
 };
 
-const DIGIT_NAMES = [
-  "ZERO",
-  "ONE",
-  "TWO",
-  "THREE",
-  "FOUR",
-  "FIVE",
-  "SIX",
-  "SEVEN",
-  "EIGHT",
-  "NINE",
-];
-
-// Ordinal suffixes
-const ORDINALS: Record<string, string> = {
-  "1st": "first",
-  "2nd": "second",
-  "3rd": "third",
-  "4th": "fourth",
-  "5th": "fifth",
-  "6th": "sixth",
-  "7th": "seventh",
-  "8th": "eighth",
-  "9th": "ninth",
-  "10th": "tenth",
-};
-
-// Common abbreviations
 const ABBREVIATIONS: Record<string, string> = {
   mr: "mister",
   mrs: "missus",
@@ -231,151 +256,131 @@ const ABBREVIATIONS: Record<string, string> = {
   kb: "kilobytes",
 };
 
-function arpabetToIpa(phoneme: string): string {
-  const stress = phoneme.match(/[012]$/)?.[0] ?? "";
-  const base = phoneme.replace(/[012]$/, "");
-  const ipa = ARPABET_TO_IPA[base];
-  if (!ipa) return "";
-  return (stress === "1" ? "ˈ" : stress === "2" ? "ˌ" : "") + ipa;
-}
+const ORDINALS: Record<string, string> = {
+  "1st": "first",
+  "2nd": "second",
+  "3rd": "third",
+  "4th": "fourth",
+  "5th": "fifth",
+  "6th": "sixth",
+  "7th": "seventh",
+  "8th": "eighth",
+  "9th": "ninth",
+  "10th": "tenth",
+};
 
-/**
- * Letter-by-letter IPA fallback for truly unknown words.
- * Better than silence — at least it pronounces every character.
- */
-function spelledOutIpa(word: string): string {
-  const LETTER_IPA: Record<string, string> = {
-    a: "eɪ",
-    b: "biː",
-    c: "siː",
-    d: "diː",
-    e: "iː",
-    f: "ɛf",
-    g: "dʒiː",
-    h: "eɪtʃ",
-    i: "aɪ",
-    j: "dʒeɪ",
-    k: "keɪ",
-    l: "ɛl",
-    m: "ɛm",
-    n: "ɛn",
-    o: "oʊ",
-    p: "piː",
-    q: "kjuː",
-    r: "ɑːɹ",
-    s: "ɛs",
-    t: "tiː",
-    u: "juː",
-    v: "viː",
-    w: "dʌbəljuː",
-    x: "ɛks",
-    y: "waɪ",
-    z: "ziː",
-  };
-  return word
-    .toLowerCase()
-    .split("")
-    .map((c) => LETTER_IPA[c] ?? c)
-    .join(" ");
-}
+// Pre-compiled regexes — never recompile on every call
+const RE_URL = /https?:\/\/\S+/g;
+const RE_EMAIL = /\S+@\S+\.\S+/g;
+const RE_ORDINAL = /\b(1st|2nd|3rd|\d+th)\b/gi;
+const RE_RUPEE = /₹\s?(\d[\d,]*)/g;
+const RE_DOLLAR = /\$\s?(\d[\d,]*)/g;
+const RE_PERCENT = /(\d+)%/g;
+const RE_NUMBER = /\b\d[\d,]*\b/g;
+const RE_DASH = /[—–]/g;
+const RE_ELLIPSIS = /\.\.\./g;
+const RE_LQUOTE = /[""]/g;
+const RE_APOS = /['']/g;
+const RE_WHITESPACE = /\s+/g;
+const RE_TOKEN_SPLIT = /^([^a-zA-Z0-9]*)([a-zA-Z0-9''-]*)([^a-zA-Z0-9]*)$/;
+const RE_ALNUM_SPLIT = /(?<=\d)(?=[a-zA-Z])|(?<=[a-zA-Z])(?=\d)/;
+const RE_ALL_CAPS = /^[A-Z]{2,5}$/;
+const RE_ALPHA = /^[a-zA-Z]+$/;
+const RE_ALNUM = /^[a-zA-Z0-9]+$/;
+const RE_DIGITS = /^\d+$/;
 
-/**
- * Naive grapheme-to-phoneme for unknown alphabetic words.
- * Handles common English patterns. Not perfect but WAY better than silence.
- */
-function naiveG2P(word: string): string {
-  const w = word.toLowerCase();
+// Suffix map compiled once
+const SUFFIX_MAP: Array<[RegExp, string]> = [
+  [/tion$/, "ʃən"],
+  [/sion$/, "ʒən"],
+  [/ous$/, "əs"],
+  [/ious$/, "iəs"],
+  [/ing$/, "ɪŋ"],
+  [/ed$/, "d"],
+  [/er$/, "ɚ"],
+  [/est$/, "ɪst"],
+  [/ly$/, "liː"],
+  [/ness$/, "nɪs"],
+  [/ment$/, "mənt"],
+  [/ful$/, "fʊl"],
+  [/less$/, "lɪs"],
+  [/able$/, "əbəl"],
+  [/ible$/, "ɪbəl"],
+  [/ity$/, "ɪtiː"],
+  [/ify$/, "ɪfaɪ"],
+  [/ize$/, "aɪz"],
+  [/ise$/, "aɪz"],
+  [/ism$/, "ɪzəm"],
+  [/ist$/, "ɪst"],
+  [/al$/, "əl"],
+  [/ic$/, "ɪk"],
+];
 
-  // Common suffix patterns -> approximate IPA
-  const suffixMap: Array<[RegExp, string]> = [
-    [/tion$/, "ʃən"],
-    [/sion$/, "ʒən"],
-    [/ous$/, "əs"],
-    [/ious$/, "iəs"],
-    [/ing$/, "ɪŋ"],
-    [/ed$/, "d"],
-    [/er$/, "ɚ"],
-    [/est$/, "ɪst"],
-    [/ly$/, "liː"],
-    [/ness$/, "nɪs"],
-    [/ment$/, "mənt"],
-    [/ful$/, "fʊl"],
-    [/less$/, "lɪs"],
-    [/able$/, "əbəl"],
-    [/ible$/, "ɪbəl"],
-    [/ity$/, "ɪtiː"],
-    [/ify$/, "ɪfaɪ"],
-    [/ize$/, "aɪz"],
-    [/ise$/, "aɪz"],
-    [/ism$/, "ɪzəm"],
-    [/ist$/, "ɪst"],
-    [/al$/, "əl"],
-    [/ic$/, "ɪk"],
-  ];
+const VALID_VOICES = new Set([
+  "af",
+  "af_bella",
+  "af_nicole",
+  "af_sarah",
+  "af_sky",
+  "am_adam",
+  "am_michael",
+  "bf_emma",
+  "bf_isabella",
+  "bm_george",
+  "bm_lewis",
+]);
 
-  for (const [pattern, ipa] of suffixMap) {
-    if (pattern.test(w)) {
-      // Pronounce the stem naively + known suffix
-      const stem = w.replace(pattern, "");
-      if (stem.length > 0) return stem + ipa;
-    }
-  }
+// Number expansion
+const ONES = [
+  "",
+  "one",
+  "two",
+  "three",
+  "four",
+  "five",
+  "six",
+  "seven",
+  "eight",
+  "nine",
+  "ten",
+  "eleven",
+  "twelve",
+  "thirteen",
+  "fourteen",
+  "fifteen",
+  "sixteen",
+  "seventeen",
+  "eighteen",
+  "nineteen",
+];
+const TENS = [
+  "",
+  "",
+  "twenty",
+  "thirty",
+  "forty",
+  "fifty",
+  "sixty",
+  "seventy",
+  "eighty",
+  "ninety",
+];
 
-  // Last resort: spell it out character by character
-  return spelledOutIpa(w);
+function below1000(x: number): string {
+  if (x < 20) return ONES[x];
+  if (x < 100)
+    return TENS[Math.floor(x / 10)] + (x % 10 ? " " + ONES[x % 10] : "");
+  return (
+    ONES[Math.floor(x / 100)] +
+    " hundred" +
+    (x % 100 ? " " + below1000(x % 100) : "")
+  );
 }
 
 function expandNumber(num: string): string {
   const n = parseInt(num, 10);
-  if (isNaN(n)) return num;
+  if (isNaN(n) || n < 0) return num;
   if (n === 0) return "zero";
-
-  const ones = [
-    "",
-    "one",
-    "two",
-    "three",
-    "four",
-    "five",
-    "six",
-    "seven",
-    "eight",
-    "nine",
-    "ten",
-    "eleven",
-    "twelve",
-    "thirteen",
-    "fourteen",
-    "fifteen",
-    "sixteen",
-    "seventeen",
-    "eighteen",
-    "nineteen",
-  ];
-  const tens = [
-    "",
-    "",
-    "twenty",
-    "thirty",
-    "forty",
-    "fifty",
-    "sixty",
-    "seventy",
-    "eighty",
-    "ninety",
-  ];
-
-  function below1000(x: number): string {
-    if (x < 20) return ones[x];
-    if (x < 100)
-      return tens[Math.floor(x / 10)] + (x % 10 ? " " + ones[x % 10] : "");
-    return (
-      ones[Math.floor(x / 100)] +
-      " hundred" +
-      (x % 100 ? " " + below1000(x % 100) : "")
-    );
-  }
-
   if (n < 1000) return below1000(n);
   if (n < 1_000_000)
     return (
@@ -396,41 +401,56 @@ function expandNumber(num: string): string {
   );
 }
 
+// Text preprocessing
 function preprocess(text: string): string {
-  return (
-    text
-      // URLs: just say "link"
-      .replace(/https?:\/\/\S+/g, "link")
-      // Emails
-      .replace(/\S+@\S+\.\S+/g, "email")
-      // Ordinals before number expansion
-      .replace(
-        /\b(1st|2nd|3rd|\d+th)\b/gi,
-        (m) => ORDINALS[m.toLowerCase()] ?? m,
-      )
-      // Currencies
-      .replace(
-        /₹\s?(\d[\d,]*)/g,
-        (_, n) => expandNumber(n.replace(/,/g, "")) + " rupees",
-      )
-      .replace(
-        /\$\s?(\d[\d,]*)/g,
-        (_, n) => expandNumber(n.replace(/,/g, "")) + " dollars",
-      )
-      // Percentages
-      .replace(/(\d+)%/g, (_, n) => expandNumber(n) + " percent")
-      // Pure numbers
-      .replace(/\b\d[\d,]*\b/g, (m) => expandNumber(m.replace(/,/g, "")))
-      // Punctuation normalization
-      .replace(/[—–]/g, ", ")
-      .replace(/\.\.\./g, ", ")
-      .replace(/[""]/g, '"')
-      .replace(/['']/g, "'")
-      .replace(/\s+/g, " ")
-      .trim()
-  );
+  return text
+    .replace(RE_URL, "link")
+    .replace(RE_EMAIL, "email")
+    .replace(RE_ORDINAL, (m) => ORDINALS[m.toLowerCase()] ?? m)
+    .replace(RE_RUPEE, (_, n) => expandNumber(n.replace(/,/g, "")) + " rupees")
+    .replace(
+      RE_DOLLAR,
+      (_, n) => expandNumber(n.replace(/,/g, "")) + " dollars",
+    )
+    .replace(RE_PERCENT, (_, n) => expandNumber(n) + " percent")
+    .replace(RE_NUMBER, (m) => expandNumber(m.replace(/,/g, "")))
+    .replace(RE_DASH, ", ")
+    .replace(RE_ELLIPSIS, ", ")
+    .replace(RE_LQUOTE, '"')
+    .replace(RE_APOS, "'")
+    .replace(RE_WHITESPACE, " ")
+    .trim();
 }
 
+// G2P helpers
+function spelledOutIpa(word: string): string {
+  return word
+    .toLowerCase()
+    .split("")
+    .map((c) => LETTER_IPA[c] ?? c)
+    .join(" ");
+}
+
+function naiveG2P(word: string): string {
+  const w = word.toLowerCase();
+  for (const [pattern, ipa] of SUFFIX_MAP) {
+    if (pattern.test(w)) {
+      const stem = w.replace(pattern, "");
+      if (stem.length > 0) return stem + ipa;
+    }
+  }
+  return spelledOutIpa(w);
+}
+
+function arpabetToIpa(phoneme: string): string {
+  const stress = phoneme.match(/[012]$/)?.[0] ?? "";
+  const base = phoneme.replace(/[012]$/, "");
+  const ipa = ARPABET_TO_IPA[base];
+  if (!ipa) return "";
+  return (stress === "1" ? "ˈ" : stress === "2" ? "ˌ" : "") + ipa;
+}
+
+// CMU dic
 async function getCmuDict(): Promise<Record<string, string>> {
   if (_cmuDict) return _cmuDict;
   const mod = await import("cmu-pronouncing-dictionary");
@@ -438,27 +458,17 @@ async function getCmuDict(): Promise<Record<string, string>> {
   return _cmuDict;
 }
 
-/**
- * Core text -> IPA conversion.
- * Priority order per token:
- * 1. Hinglish/slang phonetic map (fastest, no dict lookup)
- * 2. Abbreviations expansion (recurse)
- * 3. CMU pronouncing dictionary (best for standard English)
- * 4. Naive G2P (unknown English words, names)
- * 5. Spelled out (absolute last resort)
- *
- * Nothing is ever silently dropped.
- */
+// Core IPA conversion
 async function textToIpa(text: string): Promise<string> {
   const dict = await getCmuDict();
   const cleaned = preprocess(text);
+  const tokens = cleaned.split(RE_WHITESPACE);
   const segments: string[] = [];
 
-  for (const raw of cleaned.split(/\s+/)) {
+  for (const raw of tokens) {
     if (!raw) continue;
 
-    // Split leading/trailing punctuation
-    const m = raw.match(/^([^a-zA-Z0-9]*)([a-zA-Z0-9''-]*)([^a-zA-Z0-9]*)$/);
+    const m = raw.match(RE_TOKEN_SPLIT);
     const leadPunct = m?.[1] ?? "";
     const token = m?.[2] ?? "";
     const trailPunct = m?.[3] ?? "";
@@ -468,40 +478,31 @@ async function textToIpa(text: string): Promise<string> {
     if (token) {
       const lower = token.toLowerCase();
 
-      // 1. Hinglish/slang map
       if (HINGLISH_PHONETIC[lower]) {
+        // 1. Hinglish/slang — fastest path, direct map
         segments.push(HINGLISH_PHONETIC[lower]);
-      }
-      // 2. Abbreviations -> expand and re-process inline
-      else if (ABBREVIATIONS[lower]) {
-        const expanded = await textToIpa(ABBREVIATIONS[lower]);
-        segments.push(expanded);
-      }
-      // 3. CMU dictionary
-      else if (dict[lower]) {
+      } else if (ABBREVIATIONS[lower]) {
+        // 2. Abbreviation — expand and recurse once
+        segments.push(await textToIpa(ABBREVIATIONS[lower]));
+      } else if (dict[lower]) {
+        // 3. CMU dict — best quality for standard English
         segments.push(dict[lower].split(" ").map(arpabetToIpa).join(""));
-      }
-      // 4. All-caps acronym -> spell out letters
-      else if (/^[A-Z]{2,5}$/.test(token)) {
+      } else if (RE_ALL_CAPS.test(token)) {
+        // 4. Acronym like NASA, GDP — spell out
         segments.push(spelledOutIpa(token));
-      }
-      // 5. Pure alphabetic unknown word -> naive G2P (handles names, Hindi romanized)
-      else if (/^[a-zA-Z]+$/.test(token)) {
+      } else if (RE_ALPHA.test(token)) {
+        // 5. Unknown word (names, Hindi romanized) — naive G2P
         segments.push(naiveG2P(token));
-      }
-      // 6. Alphanumeric mixed (e.g. "4G", "MP3")
-      else if (/^[a-zA-Z0-9]+$/.test(token)) {
-        const parts = token.split(/(?<=\d)(?=[a-zA-Z])|(?<=[a-zA-Z])(?=\d)/);
+      } else if (RE_ALNUM.test(token)) {
+        // 6. Mixed alphanumeric like 4G, MP3
+        const parts = token.split(RE_ALNUM_SPLIT);
         for (const part of parts) {
-          if (/^\d+$/.test(part)) {
-            segments.push(expandNumber(part));
-          } else {
-            segments.push(naiveG2P(part));
-          }
+          segments.push(
+            RE_DIGITS.test(part) ? expandNumber(part) : naiveG2P(part),
+          );
         }
-      }
-      // 7. Anything else: keep as-is (punctuation chars etc)
-      else {
+      } else {
+        // 7. Punctuation or anything else — pass through
         segments.push(token);
       }
     }
@@ -512,49 +513,44 @@ async function textToIpa(text: string): Promise<string> {
   return segments.join(" ");
 }
 
+// Voca
 async function loadVocab(): Promise<Record<string, number>> {
-  if (vocab) return vocab;
+  if (_vocab) return _vocab;
   const raw = await fs.readFile(KOKORO_TOKENIZER, "utf-8");
-  vocab = JSON.parse(raw).model.vocab as Record<string, number>;
-  _vocabSet = new Set(Object.keys(vocab));
-  return vocab;
+  _vocab = JSON.parse(raw).model.vocab as Record<string, number>;
+  _vocabSet = new Set(Object.keys(_vocab));
+  return _vocab;
 }
 
 async function tokenize(ipaText: string): Promise<BigInt64Array> {
   const v = await loadVocab();
-  const allowed = _vocabSet ?? new Set(Object.keys(v));
-  const chars = ipaText.split("").filter((ch) => allowed.has(ch));
+  const allowed = _vocabSet!;
   const boundaryId = v["$"] ?? 0;
-  const ids = [
-    boundaryId,
-    ...chars.map((ch) => v[ch]).filter((id) => id !== undefined),
-    boundaryId,
-  ];
+  // Filter and map in one pass, no intermediate array
+  const raw = ipaText.split("");
+  const ids: number[] = [boundaryId];
+  for (const ch of raw) {
+    if (allowed.has(ch)) {
+      const id = v[ch];
+      if (id !== undefined) ids.push(id);
+    }
+  }
+  ids.push(boundaryId);
   return new BigInt64Array(ids.map(BigInt));
 }
 
+// Voice style — cached per voice name
 async function loadVoiceStyle(voice: KokoroVoice): Promise<Float32Array> {
+  const cached = _voiceStyleCache.get(voice);
+  if (cached) return cached;
   const buf = await fs.readFile(path.join(KOKORO_VOICES_DIR, `${voice}.bin`));
   const all = new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
-  return all.slice(0, 256);
+  const style = all.slice(0, 256);
+  _voiceStyleCache.set(voice, style);
+  return style;
 }
 
-function getValidVoices(): Set<string> {
-  return new Set([
-    "af",
-    "af_bella",
-    "af_nicole",
-    "af_sarah",
-    "af_sky",
-    "am_adam",
-    "am_michael",
-    "bf_emma",
-    "bf_isabella",
-    "bm_george",
-    "bm_lewis",
-  ]);
-}
-
+// ONNX model
 function pickModelPath(
   onnxEntries: string[],
   dtype: KokoroDtype,
@@ -569,56 +565,6 @@ function pickModelPath(
   return path.join(KOKORO_ONNX_DIR, match ?? files[0]);
 }
 
-function pickOrFallback<T extends string>(
-  val: unknown,
-  available: T[],
-  fallback: T,
-): T {
-  if (typeof val === "string" && available.includes(val as T)) return val as T;
-  return available.includes(fallback) ? fallback : (available[0] ?? fallback);
-}
-
-export async function getKokoroTtsOptions(): Promise<KokoroTtsOptions> {
-  const [onnxEntries, voiceEntries] = await Promise.all([
-    fs.readdir(KOKORO_ONNX_DIR).catch(() => [] as string[]),
-    fs.readdir(KOKORO_VOICES_DIR).catch(() => [] as string[]),
-  ]);
-
-  const validVoices = getValidVoices();
-
-  const dtypes = [
-    ...new Set(
-      onnxEntries
-        .map((f) => {
-          const l = f.toLowerCase();
-          if (!l.endsWith(".onnx")) return null;
-          if (l.includes("quantized") || l.includes("q8")) return "q8";
-          return l.match(/(?:fp|q)\d+/)?.[0] ?? null;
-        })
-        .filter(Boolean) as KokoroDtype[],
-    ),
-  ].sort();
-
-  const voices = [
-    ...new Set(
-      voiceEntries
-        .filter((f) => f.endsWith(".bin"))
-        .map((f) => f.slice(0, -4))
-        .filter((v) => validVoices.has(v)),
-    ),
-  ].sort();
-
-  const resolvedDtypes = dtypes.length ? dtypes : ["q8" as KokoroDtype];
-  const resolvedVoices = voices.length ? voices : ["af_nicole"];
-
-  return {
-    dtypes: resolvedDtypes,
-    voices: resolvedVoices,
-    defaultDtype: pickOrFallback("q8", resolvedDtypes, "q8"),
-    defaultVoice: pickOrFallback("af_nicole", resolvedVoices, "af_nicole"),
-  };
-}
-
 export async function initKokoro(dtype: KokoroDtype = "q8"): Promise<void> {
   const onnxEntries = await fs
     .readdir(KOKORO_ONNX_DIR)
@@ -629,42 +575,26 @@ export async function initKokoro(dtype: KokoroDtype = "q8"): Promise<void> {
 
   session = await ort.InferenceSession.create(modelPath, {
     executionProviders: ["cpu"],
+    // These are the ONNX runtime session options that actually matter on CPU
+    graphOptimizationLevel: "all",
+    executionMode: "sequential", // better for single-threaded CPU
+    interOpNumThreads: 1,
+    intraOpNumThreads: 2, // use both cores for ONNX ops
   });
   loadedModelPath = modelPath;
   loadedDtype = dtype;
 }
 
-export async function generateSpeechBuffer(
-  text: string,
-  voice: KokoroVoice = "af_nicole",
-  speed = 1.0,
-): Promise<Buffer> {
-  await initKokoro();
-  if (!session) throw new Error("Kokoro session not initialized.");
-  if (!getValidVoices().has(voice))
-    throw new Error(`Invalid voice: "${voice}"`);
-
-  const ipaText = await textToIpa(text);
-  const tokenIds = await tokenize(ipaText);
-  if (tokenIds.length <= 2)
-    throw new Error(`No tokens produced for: "${text}"`);
-
-  const styleData = new Float32Array(256);
-  styleData.set((await loadVoiceStyle(voice)).slice(0, 256));
-
-  const results = await session.run({
-    input_ids: new ort.Tensor("int64", tokenIds, [1, tokenIds.length]),
-    style: new ort.Tensor("float32", styleData, [1, 256]),
-    speed: new ort.Tensor("float32", new Float32Array([speed]), [1]),
-  });
-
-  const pcm = results[Object.keys(results)[0]].data as Float32Array;
-  return encodeWav(pcm, SAMPLE_RATE);
-}
-
+// WAV encoding — reuses buffer to avoid GC pressure
 function encodeWav(samples: Float32Array, sampleRate: number): Buffer {
   const dataSize = samples.length * 2;
-  const buf = Buffer.allocUnsafe(44 + dataSize);
+  const totalSize = 44 + dataSize;
+
+  // Reuse buffer if large enough, otherwise allocate new
+  if (!_wavBuf || _wavBuf.length < totalSize) {
+    _wavBuf = Buffer.allocUnsafe(totalSize);
+  }
+  const buf = _wavBuf.slice(0, totalSize);
   let o = 0;
 
   buf.write("RIFF", o);
@@ -678,9 +608,9 @@ function encodeWav(samples: Float32Array, sampleRate: number): Buffer {
   buf.writeUInt32LE(16, o);
   o += 4;
   buf.writeUInt16LE(1, o);
-  o += 2;
+  o += 2; // PCM
   buf.writeUInt16LE(1, o);
-  o += 2;
+  o += 2; // mono
   buf.writeUInt32LE(sampleRate, o);
   o += 4;
   buf.writeUInt32LE(sampleRate * 2, o);
@@ -702,7 +632,113 @@ function encodeWav(samples: Float32Array, sampleRate: number): Buffer {
     o += 2;
   }
 
-  return buf;
+  // Return a copy so the reuse buffer stays free for next call
+  return Buffer.from(buf);
+}
+
+// Concurrency guard — queue TTS calls, ONNX is not re-entrant
+function acquireTts(): Promise<void> {
+  return new Promise((resolve) => {
+    if (!_ttsRunning) {
+      _ttsRunning = true;
+      resolve();
+    } else {
+      _ttsQueue.push(resolve);
+    }
+  });
+}
+
+function releaseTts(): void {
+  if (_ttsQueue.length > 0) {
+    _ttsQueue.shift()!();
+  } else {
+    _ttsRunning = false;
+  }
+}
+
+// Public API
+export async function getKokoroTtsOptions(): Promise<KokoroTtsOptions> {
+  const [onnxEntries, voiceEntries] = await Promise.all([
+    fs.readdir(KOKORO_ONNX_DIR).catch(() => [] as string[]),
+    fs.readdir(KOKORO_VOICES_DIR).catch(() => [] as string[]),
+  ]);
+
+  const dtypes = [
+    ...new Set(
+      onnxEntries
+        .map((f) => {
+          const l = f.toLowerCase();
+          if (!l.endsWith(".onnx")) return null;
+          if (l.includes("quantized") || l.includes("q8")) return "q8";
+          return l.match(/(?:fp|q)\d+/)?.[0] ?? null;
+        })
+        .filter(Boolean) as KokoroDtype[],
+    ),
+  ].sort();
+
+  const voices = [
+    ...new Set(
+      voiceEntries
+        .filter((f) => f.endsWith(".bin"))
+        .map((f) => f.slice(0, -4))
+        .filter((v) => VALID_VOICES.has(v)),
+    ),
+  ].sort();
+
+  const resolvedDtypes = dtypes.length ? dtypes : ["q8" as KokoroDtype];
+  const resolvedVoices = voices.length ? voices : ["af_nicole"];
+
+  const pickOrFallback = <T extends string>(
+    val: unknown,
+    available: T[],
+    fallback: T,
+  ): T => {
+    if (typeof val === "string" && available.includes(val as T))
+      return val as T;
+    return available.includes(fallback) ? fallback : (available[0] ?? fallback);
+  };
+
+  return {
+    dtypes: resolvedDtypes,
+    voices: resolvedVoices,
+    defaultDtype: pickOrFallback("q8", resolvedDtypes, "q8"),
+    defaultVoice: pickOrFallback("af_nicole", resolvedVoices, "af_nicole"),
+  };
+}
+
+export async function generateSpeechBuffer(
+  text: string,
+  voice: KokoroVoice = "af_nicole",
+  speed = 1.0,
+): Promise<Buffer> {
+  if (!VALID_VOICES.has(voice)) throw new Error(`Invalid voice: "${voice}"`);
+
+  await initKokoro();
+  if (!session) throw new Error("Kokoro session not initialized.");
+
+  // Serialize concurrent TTS calls — ONNX session is not thread-safe
+  await acquireTts();
+  try {
+    // Run IPA + tokenize in parallel with voice style load
+    const [tokenIds, styleData] = await Promise.all([
+      textToIpa(text).then(tokenize),
+      loadVoiceStyle(voice),
+    ]);
+
+    if (tokenIds.length <= 2)
+      throw new Error(`No tokens produced for: "${text}"`);
+
+    const results = await session.run({
+      input_ids: new ort.Tensor("int64", tokenIds, [1, tokenIds.length]),
+      style: new ort.Tensor("float32", styleData, [1, 256]),
+      speed: new ort.Tensor("float32", new Float32Array([speed]), [1]),
+    });
+
+    const pcm = results[Object.keys(results)[0]].data as Float32Array;
+    return encodeWav(pcm, SAMPLE_RATE);
+  } finally {
+    releaseTts();
+  }
 }
 
 export async function playBuffer(wavBuffer: Buffer): Promise<void> {

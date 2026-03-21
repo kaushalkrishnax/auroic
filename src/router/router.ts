@@ -1,8 +1,9 @@
 /**
  * Router — classifies history + candidate messages and returns a routing decision.
+ * Architecture mirrors Ollama: warm session, prompt prefix caching, request queue.
  */
 
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import getConfig from "@/runtime/index.js";
@@ -37,8 +38,13 @@ type LlamaContext = {
   dispose?: () => Promise<void> | void;
 };
 
-type LlamaChatSessionCtor = new (args: { contextSequence: unknown }) => {
+type LlamaChatSessionCtor = new (args: {
+  contextSequence: unknown;
+  systemPrompt?: string;
+  autoDisposeSequence?: boolean;
+}) => {
   prompt: (input: string, options?: Record<string, number>) => Promise<string>;
+  resetChatHistory: () => void;
 };
 
 const PROJECT_ROOT = path.resolve(
@@ -53,10 +59,16 @@ const DEFAULT_MODEL_PATH = path.join(
 );
 const DEFAULT_MODELFILE_PATH = path.join(DEFAULT_MODEL_DIR, "Modelfile");
 
-// ── Singletons ────────────────────────────────────────────────────────────────
-// Model is cached across calls (already done)
-// Context + Session are NOW also cached — this is the biggest perf fix.
-// Previously a fresh context was created and disposed on every single call.
+// Pre-compiled regexe─
+const RE_THINK = /<think>\s*([\s\S]*?)\s*<\/think>/;
+const RE_R_LINE = /R:\s*(.*)/;
+const RE_KV = /([A-Z]+)\s*=\s*([^|\n,]+)/gi;
+const RE_C_SLOT = /C(\d+)/i;
+const RE_MENTION = /@\S+/g;
+const RE_MENTION_KEEP_BOT = /@(?!BOT\b)\S+/gi;
+const RE_SPACES = /\s{2,}/g;
+
+// Singleton
 let cachedLlama: LlamaRuntime | null = null;
 let cachedModelPath: string | null = null;
 let cachedModel: LoadedModel | null = null;
@@ -64,13 +76,37 @@ let cachedContext: LlamaContext | null = null;
 let cachedSession: InstanceType<LlamaChatSessionCtor> | null = null;
 let LlamaChatSession: LlamaChatSessionCtor | null = null;
 
-// ── Modelfile cache ───────────────────────────────────────────────────────────
+// Tracks the system prompt the current session was built with.
+let cachedSessionSystemPrompt: string | null = null;
+
+// Request queue — mirrors Ollama's serial inference queu
+let _inferRunning = false;
+const _inferQueue: Array<() => void> = [];
+
+function acquireInfer(): Promise<void> {
+  return new Promise((resolve) => {
+    if (!_inferRunning) {
+      _inferRunning = true;
+      resolve();
+    } else {
+      _inferQueue.push(resolve);
+    }
+  });
+}
+
+function releaseInfer(): void {
+  const next = _inferQueue.shift();
+  if (next) {
+    next();
+  } else {
+    _inferRunning = false;
+  }
+}
+
+// Modelfile cach
 let modelfileCachePath: string | null = null;
 let modelfileCacheMtimeMs = -1;
 let modelfileCache: LocalRouterOverrides = { parameters: {} };
-
-// ── Duplicate repeat_penalty bug fix ─────────────────────────────────────────
-// Original code set repeatPenalty twice. Fixed below in buildGenerationOptions.
 
 async function fileExists(filePath: string): Promise<boolean> {
   try {
@@ -92,59 +128,49 @@ function parseModelfile(
 ): LocalRouterOverrides {
   const lines = content.split(/\r?\n/);
   const parsed: LocalRouterOverrides = { parameters: {} };
-
   let i = 0;
+
   while (i < lines.length) {
     const raw = lines[i].trim();
-    i += 1;
-
+    i++;
     if (!raw || raw.startsWith("#")) continue;
 
     const fromMatch = raw.match(/^FROM\s+(.+)$/i);
     if (fromMatch?.[1]) {
-      const fromValue = fromMatch[1].trim().replace(/^['\"]|['\"]$/g, "");
-      if (fromValue.endsWith(".gguf")) {
-        parsed.modelPath = path.isAbsolute(fromValue)
-          ? fromValue
-          : path.resolve(baseDir, fromValue);
+      const v = fromMatch[1].trim().replace(/^['\"]|['\"]$/g, "");
+      if (v.endsWith(".gguf")) {
+        parsed.modelPath = path.isAbsolute(v) ? v : path.resolve(baseDir, v);
       }
       continue;
     }
 
     if (/^SYSTEM\s+"""\s*$/i.test(raw)) {
-      const buffer: string[] = [];
-      while (i < lines.length && !/^"""\s*$/.test(lines[i].trim())) {
-        buffer.push(lines[i]);
-        i += 1;
-      }
-      if (i < lines.length) i += 1;
-      parsed.systemPrompt = buffer.join("\n").trim();
+      const buf: string[] = [];
+      while (i < lines.length && !/^"""\s*$/.test(lines[i].trim()))
+        buf.push(lines[i++]);
+      if (i < lines.length) i++;
+      parsed.systemPrompt = buf.join("\n").trim();
       continue;
     }
 
-    const systemInline = raw.match(/^SYSTEM\s+(.+)$/i);
-    if (systemInline?.[1]) {
-      parsed.systemPrompt = systemInline[1]
-        .trim()
-        .replace(/^['\"]|['\"]$/g, "");
+    const sysInline = raw.match(/^SYSTEM\s+(.+)$/i);
+    if (sysInline?.[1]) {
+      parsed.systemPrompt = sysInline[1].trim().replace(/^['\"]|['\"]$/g, "");
       continue;
     }
 
-    const parameterMatch = raw.match(/^PARAMETER\s+([A-Za-z0-9_.-]+)\s+(.+)$/i);
-    if (parameterMatch?.[1] && parameterMatch[2]) {
-      const key = parameterMatch[1].trim().toLowerCase();
-      const value = parameterMatch[2].trim().replace(/^['\"]|['\"]$/g, "");
-
+    const paramMatch = raw.match(/^PARAMETER\s+([A-Za-z0-9_.-]+)\s+(.+)$/i);
+    if (paramMatch?.[1] && paramMatch[2]) {
+      const key = paramMatch[1].trim().toLowerCase();
+      const value = paramMatch[2].trim().replace(/^['\"]|['\"]$/g, "");
       if (key === "think") {
         parsed.think = !["false", "0", "no", "off"].includes(
           value.toLowerCase(),
         );
         continue;
       }
-
       const numeric = parseNumeric(value);
       if (numeric !== null) parsed.parameters[key] = numeric;
-      continue;
     }
   }
 
@@ -155,19 +181,15 @@ async function loadModelfileOverrides(
   modelfilePath: string,
 ): Promise<LocalRouterOverrides> {
   try {
-    const { stat } = await import("node:fs/promises");
     const s = await stat(modelfilePath);
-
     if (
       modelfileCachePath === modelfilePath &&
       modelfileCacheMtimeMs === s.mtimeMs
     ) {
       return modelfileCache;
     }
-
     const content = await readFile(modelfilePath, "utf8");
     const parsed = parseModelfile(content, path.dirname(modelfilePath));
-
     modelfileCachePath = modelfilePath;
     modelfileCacheMtimeMs = s.mtimeMs;
     modelfileCache = parsed;
@@ -175,7 +197,10 @@ async function loadModelfileOverrides(
   } catch (err) {
     logger.warn(
       "Router Modelfile could not be loaded; using runtime settings",
-      { modelfilePath, error: (err as Error).message },
+      {
+        modelfilePath,
+        error: (err as Error).message,
+      },
     );
     return { parameters: {} };
   }
@@ -191,25 +216,28 @@ async function resolveRouterModelPath(
       : path.resolve(PROJECT_ROOT, configuredModel);
     if (await fileExists(explicit)) return explicit;
   }
-
-  if (modelfileModelPath && (await fileExists(modelfileModelPath))) {
+  if (modelfileModelPath && (await fileExists(modelfileModelPath)))
     return modelfileModelPath;
-  }
-
   if (await fileExists(DEFAULT_MODEL_PATH)) return DEFAULT_MODEL_PATH;
-
   throw new Error(
-    `Router GGUF model not found. Expected: ${DEFAULT_MODEL_PATH} or configured router.model`,
+    `Router GGUF model not found. Expected: ${DEFAULT_MODEL_PATH}`,
   );
 }
 
 /**
- * Returns a warm, reusable session.
- * Creates everything once; subsequent calls return the cached session instantly.
- * If the model path changes (hot-swap), everything is rebuilt.
+ * Ollama-style warm session management.
+ *
+ * Layer 1 — llama runtime:    loaded once, never reloaded
+ * Layer 2 — model weights:    reloaded only if modelPath changes
+ * Layer 3 — KV context:       reloaded only if modelPath changes
+ * Layer 4 — chat session:     rebuilt if systemPrompt changes, context is REUSED
+ *
+ * This means a system prompt hot-reload (e.g. Modelfile edit) only costs
+ * a session rebuild, not a full model reload. Exactly what Ollama does.
  */
 async function getSession(
   modelPath: string,
+  systemPrompt: string,
   contextOpts: {
     threads: number;
     batchSize: number;
@@ -217,7 +245,7 @@ async function getSession(
     flashAttention: boolean;
   },
 ): Promise<InstanceType<LlamaChatSessionCtor>> {
-  // Bootstrap llama runtime once
+  // Layer 1: bootstrap llama runtime onc
   if (!cachedLlama || !LlamaChatSession) {
     const mod = (await import("node-llama-cpp")) as {
       getLlama: (opts?: Record<string, unknown>) => Promise<LlamaRuntime>;
@@ -225,52 +253,52 @@ async function getSession(
     };
     cachedLlama = await mod.getLlama();
     LlamaChatSession = mod.LlamaChatSession;
+    logger.info("Router llama runtime initialized");
   }
 
-  // Rebuild everything if model path changed
+  // Layer 2+3: rebuild model + context only on model path change
   if (cachedModelPath !== modelPath) {
-    logger.info("Router model path changed, rebuilding context", { modelPath });
+    logger.info("Router model changed, reloading", { modelPath });
 
     if (cachedContext?.dispose) await cachedContext.dispose();
     cachedContext = null;
     cachedSession = null;
+    cachedSessionSystemPrompt = null;
 
     cachedModel = await cachedLlama.loadModel({
       modelPath,
       defaultContextFlashAttention: contextOpts.flashAttention,
     });
     cachedModelPath = modelPath;
-    logger.info("Router GGUF model loaded", { modelPath });
+
+    cachedContext = await cachedModel.createContext({
+      threads: contextOpts.threads,
+      batchSize: contextOpts.batchSize,
+      contextSize: contextOpts.contextSize,
+      flashAttention: contextOpts.flashAttention,
+    });
+
+    logger.info("Router model + context loaded", { modelPath, contextOpts });
   }
 
-  // Reuse existing warm session
-  if (cachedSession && cachedContext) {
-    return cachedSession;
+  // Layer 4: rebuild session only if system prompt changed.
+  if (!cachedSession || cachedSessionSystemPrompt !== systemPrompt) {
+    cachedSession = new LlamaChatSession!({
+      contextSequence: cachedContext!.getSequence(),
+      systemPrompt, // baked into KV cache prefix
+      autoDisposeSequence: false, // we manage context lifetime ourselves
+    });
+    cachedSessionSystemPrompt = systemPrompt;
+    logger.info("Router session created with new system prompt");
   }
 
-  // Create context + session once
-  cachedContext = await cachedModel!.createContext({
-    threads: contextOpts.threads,
-    batchSize: contextOpts.batchSize,
-    contextSize: contextOpts.contextSize,
-    flashAttention: contextOpts.flashAttention,
-  });
-
-  cachedSession = new LlamaChatSession!({
-    contextSequence: cachedContext.getSequence(),
-  });
-
-  logger.info("Router context + session created", { contextOpts });
   return cachedSession;
 }
 
-function buildPrompt(
-  systemPrompt: string,
-  formattedWindow: string,
-  think: boolean,
-): string {
-  const noThinkSuffix = think ? "" : "\n/no_think";
-  return `${systemPrompt}\n\n${formattedWindow}${noThinkSuffix}`;
+function buildPrompt(formattedWindow: string, think: boolean): string {
+  // System prompt is now passed to session constructor, NOT prepended here.
+  // This lets node-llama-cpp cache the system prompt tokens in the KV cache.
+  return think ? formattedWindow : `${formattedWindow}\n/no_think`;
 }
 
 function buildGenerationOptions(
@@ -284,13 +312,12 @@ function buildGenerationOptions(
     | undefined,
   modelfileParameters: Record<string, number>,
 ): Record<string, number> {
-  // Modelfile params win over runtime options
   const merged = {
     temperature: runtimeOptions?.temperature,
     top_p: runtimeOptions?.top_p,
     top_k: runtimeOptions?.top_k,
     repeat_penalty: runtimeOptions?.repeat_penalty,
-    ...modelfileParameters,
+    ...modelfileParameters, // modelfile wins
   };
 
   const out: Record<string, number> = {};
@@ -299,7 +326,7 @@ function buildGenerationOptions(
   if (typeof merged.top_p === "number") out.topP = merged.top_p;
   if (typeof merged.top_k === "number") out.topK = merged.top_k;
   if (typeof merged.repeat_penalty === "number")
-    out.repeatPenalty = merged.repeat_penalty; // fixed: was set twice
+    out.repeatPenalty = merged.repeat_penalty;
   return out;
 }
 
@@ -310,17 +337,19 @@ export function formatWindow(history: string[], candidates: string[]): string {
   const c = [...candidates];
   while (c.length < 3) c.unshift("...");
 
+  // Trim long messages — prevents context overflow on chatty groups
+  const trim = (s: string) => (s.length > 200 ? s.slice(0, 197) + "..." : s);
+
   return [
-    ...h.map((msg, i) => `H${i + 1}: ${stripMentions(msg)}`),
-    ...c.map((msg, i) => `C${i + 1}: ${stripMentions(msg, true)}`),
+    ...h.map((msg, i) => `H${i + 1}: ${stripMentions(trim(msg))}`),
+    ...c.map((msg, i) => `C${i + 1}: ${stripMentions(trim(msg), true)}`),
   ].join("\n");
 }
 
 function stripMentions(text: string, keepBot = false): string {
-  const pattern = keepBot ? /@(?!BOT\b)\S+/gi : /@\S+/g;
   return text
-    .replace(pattern, "")
-    .replace(/\s{2,}/g, " ")
+    .replace(keepBot ? RE_MENTION_KEEP_BOT : RE_MENTION, "")
+    .replace(RE_SPACES, " ")
     .trim();
 }
 
@@ -334,15 +363,17 @@ function parseRouterOutput(output: string): RouterDecision {
   };
 
   try {
-    const thinkMatch = output.match(/<think>\s*([\s\S]*?)\s*<\/think>/);
+    const thinkMatch = output.match(RE_THINK);
     if (thinkMatch?.[1]) decision.reason = thinkMatch[1].trim();
 
-    const rMatch = output.match(/R:\s*(.*)/);
+    const rMatch = output.match(RE_R_LINE);
     const parsePart = rMatch ? rMatch[1] : output;
-    const regex = /([A-Z]+)\s*=\s*([^|\n,]+)/gi;
+
+    // Reset lastIndex before exec loop — shared regex requires this
+    RE_KV.lastIndex = 0;
     let match: RegExpExecArray | null;
 
-    while ((match = regex.exec(parsePart)) !== null) {
+    while ((match = RE_KV.exec(parsePart)) !== null) {
       const key = match[1].trim().toUpperCase();
       const value = match[2].trim();
       if (!key || !value) continue;
@@ -350,24 +381,22 @@ function parseRouterOutput(output: string): RouterDecision {
 
       switch (key) {
         case "TYPE":
-          if (["text", "ignore", "react", "media"].includes(lower)) {
+          if (["text", "ignore", "react", "media"].includes(lower))
             decision.type = lower as ActionType;
-          }
           break;
         case "TARGET":
           if (lower === "null") {
             decision.target = null;
           } else {
-            const slotMatch = value.match(/C(\d+)/i);
+            const slotMatch = value.match(RE_C_SLOT);
             decision.target = slotMatch
               ? `C${parseInt(slotMatch[1], 10)}`
               : value;
           }
           break;
         case "EFFORT":
-          if (["low", "medium", "high"].includes(lower)) {
+          if (["low", "medium", "high"].includes(lower))
             decision.effort = lower as EffortLevel;
-          }
           break;
         case "TITLE":
           decision.title = lower === "null" ? null : value;
@@ -392,32 +421,35 @@ export async function invokeRouter(
   const formattedWindow = formatWindow(history, candidates);
   logger.info("Invoking router", { window: formattedWindow });
 
+  // Serialize inference — same as Ollama's request queue
+  await acquireInfer();
+
   try {
     const configuredModelfilePath = process.env.ROUTER_MODELFILE_PATH
       ? path.resolve(PROJECT_ROOT, process.env.ROUTER_MODELFILE_PATH)
       : DEFAULT_MODELFILE_PATH;
 
-    const modelfile = await loadModelfileOverrides(configuredModelfilePath);
+    const [modelfile] = await Promise.all([
+      loadModelfileOverrides(configuredModelfilePath),
+    ]);
 
     const modelPath = await resolveRouterModelPath(
       process.env.ROUTER_MODEL_PATH ?? config.router.model,
       modelfile.modelPath,
     );
 
-    // Get warm session — no cold start after first call
-    const session = await getSession(modelPath, {
-      threads: 2, // use both cores on your i3
+    const systemPrompt =
+      modelfile.systemPrompt?.trim() || config.router.systemPrompt;
+    const think = modelfile.think ?? config.router.think;
+
+    const session = await getSession(modelPath, systemPrompt, {
+      threads: 2,
       batchSize: 512,
-      contextSize: 512, // router output is tiny, no need for 4096
-      flashAttention: true, // helps even on CPU in recent llama.cpp builds
+      contextSize: 2048,
+      flashAttention: true,
     });
 
-    const prompt = buildPrompt(
-      modelfile.systemPrompt?.trim() || config.router.systemPrompt,
-      formattedWindow,
-      modelfile.think ?? config.router.think,
-    );
-
+    const prompt = buildPrompt(formattedWindow, think);
     const generationOptions = buildGenerationOptions(
       config.router.options,
       modelfile.parameters,
@@ -438,5 +470,7 @@ export async function invokeRouter(
       title: null,
       reason: null,
     };
+  } finally {
+    releaseInfer();
   }
 }
