@@ -4,6 +4,7 @@
  */
 
 import fs from "fs";
+import path from "path";
 import { chromium } from "playwright";
 import type { BrowserContext, Page } from "playwright";
 import logger from "@/utils/logger.js";
@@ -20,6 +21,45 @@ let _context: BrowserContext | null = null;
 let _sessionPage: Page | null = null;
 let _sessionInitialized = false;
 
+const PLAYWRIGHT_STATE_PATH = path.resolve(process.cwd(), "state.json");
+
+function shouldUseStorageState(statePath: string): boolean {
+  if (!fs.existsSync(statePath)) return false;
+
+  try {
+    const raw = fs.readFileSync(statePath, "utf8").trim();
+    if (!raw) {
+      logger.warn("state.json exists but is empty; skipping storage state load", {
+        statePath,
+      });
+      return false;
+    }
+
+    JSON.parse(raw);
+    return true;
+  } catch (err) {
+    logger.warn("state.json is invalid JSON; skipping storage state load", {
+      statePath,
+      error: err instanceof Error ? err.message : err,
+    });
+    return false;
+  }
+}
+
+async function persistStorageState(context: BrowserContext): Promise<void> {
+  try {
+    await context.storageState({ path: PLAYWRIGHT_STATE_PATH });
+    logger.info("Playwright storage state saved", {
+      statePath: PLAYWRIGHT_STATE_PATH,
+    });
+  } catch (err) {
+    logger.warn("Failed to persist Playwright storage state", {
+      statePath: PLAYWRIGHT_STATE_PATH,
+      error: err instanceof Error ? err.message : err,
+    });
+  }
+}
+
 /* ------------------------------------------------ */
 /* Browser connect                                   */
 /* ------------------------------------------------ */
@@ -34,8 +74,16 @@ export async function connectBrowser(): Promise<{ context: BrowserContext }> {
 
   logger.info("Launching headless Chromium…", { profileDir });
 
+  const useStorageState = shouldUseStorageState(PLAYWRIGHT_STATE_PATH);
+  if (useStorageState) {
+    logger.info("Using Playwright storage state from project root", {
+      statePath: PLAYWRIGHT_STATE_PATH,
+    });
+  }
+
   const context = await chromium.launchPersistentContext(profileDir, {
   headless: true,
+  ...(useStorageState ? { storageState: PLAYWRIGHT_STATE_PATH } : {}),
   args: [
     "--no-sandbox",
     "--disable-setuid-sandbox",
@@ -238,6 +286,8 @@ export async function initInstagramSession(): Promise<void> {
 
   logger.info("Instagram session ready", { chatId });
 
+  await persistStorageState(context);
+
   _sessionPage = page;
   _sessionInitialized = true;
 }
@@ -268,6 +318,7 @@ async function performLogin(page: Page): Promise<void> {
 export async function disconnectBrowser(): Promise<void> {
   if (_context) {
     try {
+      await persistStorageState(_context);
       await _context.close();
     } catch (err) {
       logger.warn("Failed to close browser context", {
