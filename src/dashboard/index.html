@@ -2753,7 +2753,10 @@
 
       el.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-      <div style="font-size:13px;color:var(--subtle)">Edit <code style="color:var(--accent)">config.db/settings</code> — changes apply after save</div>
+      <div style="font-size:13px;color:var(--subtle)">
+        <div>Edit <code style="color:var(--accent)">config.db/settings</code> — changes apply after save</div>
+        <div style="margin-top:4px">Router model path is read-only and sourced from .env (ROUTER_MODEL_PATH).</div>
+      </div>
       <div style="display:flex;gap:8px">
         <button class="btn secondary" onclick="loadConfig().then(()=>renderView())">↻ Reload</button>
         <button class="btn" onclick="saveConfig()">Save</button>
@@ -2784,14 +2787,18 @@
         .map(([key, val]) => {
           const path = prefix + "." + key;
           const label = key;
+          const isReadonly = isReadonlyConfigPath(path);
+          const readonlyHint = isReadonly
+            ? '<span style="color:var(--muted)">(env readonly)</span>'
+            : "";
           const selectOptions = getConfigStringOptions(path);
           if (typeof val === "boolean") {
             return `<div class="field-card">
-        <div class="field-label">${esc(label)}</div>
+        <div class="field-label">${esc(label)} ${readonlyHint}</div>
         <div class="toggle-row">
           <span style="font-family:var(--mono);font-size:12px;color:var(--subtle)">${val}</span>
           <label class="toggle">
-            <input type="checkbox" ${val ? "checked" : ""} onchange="updateConfig('${esc(path)}', this.checked)">
+            <input type="checkbox" ${val ? "checked" : ""} ${isReadonly ? "disabled" : ""} onchange="updateConfig('${esc(path)}', this.checked)">
             <span class="slider"></span>
           </label>
         </div>
@@ -2802,12 +2809,13 @@
             const step = isFloat ? 0.1 : 1;
             const decimals = isFloat ? 4 : 0;
             return `<div class="field-card">
-        <div class="field-label">${esc(label)}</div>
+        <div class="field-label">${esc(label)} ${readonlyHint}</div>
         <div class="number-input">
-          <button class="num-btn" onclick="adjustConfigNumber('${esc(path)}', this, -${step}, ${decimals})">−</button>
+          <button class="num-btn" ${isReadonly ? "disabled" : ""} onclick="adjustConfigNumber('${esc(path)}', this, -${step}, ${decimals})">−</button>
           <input class="field-input" type="number" value="${val}" step="${step}" style="width:80px;text-align:center"
+            ${isReadonly ? "readonly" : ""}
             onchange="updateConfig('${esc(path)}', +this.value)">
-          <button class="num-btn" onclick="adjustConfigNumber('${esc(path)}', this, ${step}, ${decimals})">+</button>
+          <button class="num-btn" ${isReadonly ? "disabled" : ""} onclick="adjustConfigNumber('${esc(path)}', this, ${step}, ${decimals})">+</button>
         </div>
       </div>`;
           }
@@ -2817,8 +2825,8 @@
             selectOptions.length > 0
           ) {
             return `<div class="field-card">
-        <div class="field-label">${esc(label)}</div>
-        <select class="field-input" onchange="updateConfig('${esc(path)}', this.value)">
+        <div class="field-label">${esc(label)} ${readonlyHint}</div>
+        <select class="field-input" ${isReadonly ? "disabled" : ""} onchange="updateConfig('${esc(path)}', this.value)">
           ${selectOptions
                 .map(
                   (opt) =>
@@ -2830,16 +2838,18 @@
           }
           if (typeof val === "string" && val.length > 60) {
             return `<div class="field-card" style="grid-column:span 2">
-        <div class="field-label">${esc(label)}</div>
+        <div class="field-label">${esc(label)} ${readonlyHint}</div>
         <textarea class="field-input" rows="4"
+          ${isReadonly ? "readonly" : ""}
           onchange="updateConfig('${esc(path)}', this.value)"
           oninput="updateConfig('${esc(path)}', this.value)">${esc(val)}</textarea>
       </div>`;
           }
           if (Array.isArray(val)) {
             return `<div class="field-card">
-        <div class="field-label">${esc(label)} <span style="color:var(--muted)">(comma-sep)</span></div>
+        <div class="field-label">${esc(label)} <span style="color:var(--muted)">(comma-sep)</span> ${readonlyHint}</div>
         <input class="field-input" type="text" value="${esc(val.join(", "))}"
+          ${isReadonly ? "readonly" : ""}
           onchange="updateConfig('${esc(path)}', this.value.split(',').map(s=>s.trim()).filter(Boolean))">
       </div>`;
           }
@@ -2852,12 +2862,17 @@
       </div>`;
           }
           return `<div class="field-card">
-      <div class="field-label">${esc(label)}</div>
+      <div class="field-label">${esc(label)} ${readonlyHint}</div>
       <input class="field-input" type="text" value="${esc(String(val ?? ""))}"
+        ${isReadonly ? "readonly" : ""}
         onchange="updateConfig('${esc(path)}', this.value)">
     </div>`;
         })
         .join("");
+    }
+
+    function isReadonlyConfigPath(path) {
+      return path === "router.model";
     }
 
     function getConfigStringOptions(path) {

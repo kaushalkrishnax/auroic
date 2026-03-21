@@ -191,10 +191,15 @@ export function getSettingsPayload(): RuntimeSettingsPayload {
 
   if (!row) return DEFAULT_RUNTIME_SETTINGS;
 
+  const router = {
+    ...DEFAULT_RUNTIME_SETTINGS.router,
+    ...((row.router as any) ?? {}),
+  };
+
   return {
     triggers: (row.triggers as any) ?? DEFAULT_RUNTIME_SETTINGS.triggers,
     llm: (row.llm as any) ?? DEFAULT_RUNTIME_SETTINGS.llm,
-    router: (row.router as any) ?? DEFAULT_RUNTIME_SETTINGS.router,
+    router,
     debug: (row.debug as any) ?? DEFAULT_RUNTIME_SETTINGS.debug,
     instagram: (row.instagram as any) ?? DEFAULT_RUNTIME_SETTINGS.instagram,
     tts: (row.tts as any) ?? DEFAULT_RUNTIME_SETTINGS.tts,
@@ -203,17 +208,24 @@ export function getSettingsPayload(): RuntimeSettingsPayload {
 
 export function upsertSettingsPayload(payload: RuntimeSettingsPayload): void {
   const db = getConfigDB();
+  const { model: _ignoredRouterModel, ...routerForDb } =
+    payload.router ?? DEFAULT_RUNTIME_SETTINGS.router;
+  const payloadForDb = {
+    ...payload,
+    // Router model path is env-driven and should not be persisted in config.db.
+    router: routerForDb,
+  };
 
   db.insert(settingsTable)
     .values({
       id: 1,
-      ...payload,
+      ...payloadForDb,
       updatedAt: nowIso(),
     })
     .onConflictDoUpdate({
       target: settingsTable.id,
       set: {
-        ...payload,
+        ...payloadForDb,
         updatedAt: nowIso(),
       },
     })

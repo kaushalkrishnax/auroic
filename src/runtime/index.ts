@@ -25,6 +25,9 @@ const env = {
   igPassword: process.env.INSTAGRAM_PASSWORD ?? "",
   dbPath: process.env.DB_PATH ?? "./data/state.db",
   configDbPath: process.env.CONFIG_DB_PATH ?? "./data/config.db",
+  routerModelPath:
+    process.env.ROUTER_MODEL_PATH ??
+    "models/auroic-router/auroic-router-0.6b.q8_0.gguf",
 };
 
 let runtimeSettings: RuntimeSettingsPayload = DEFAULT_RUNTIME_SETTINGS;
@@ -95,8 +98,7 @@ export function getConfig() {
       },
     },
     router: {
-      model:
-        router.model ?? "models/auroic-router/auroic-router-0.6b.q8_0.gguf",
+      model: env.routerModelPath,
       think: router.think ?? true,
       systemPrompt:
         router.systemPrompt ??
