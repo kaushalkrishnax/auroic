@@ -293,6 +293,13 @@ curl -L "https://huggingface.co/onnx-community/Kokoro-82M-ONNX/resolve/main/onnx
   -o models/kokoro-tts/onnx/model_quantized.onnx
 ```
 
+Download at least one voice file (e.g., `af_nicole.bin`):
+
+```bash
+curl -L "https://huggingface.co/onnx-community/Kokoro-82M-ONNX/resolve/main/voices/af_nicole.bin?download=true" \
+  -o models/kokoro-tts/voices/af_nicole.bin
+```
+
 **File structure:**
 
 ```
@@ -302,7 +309,6 @@ models/kokoro-tts/
 │   └── model_quantized.onnx  # (q8)
 ├── voices/
 │   ├── af_nicole.bin
-│   ├── af_bella.bin
 │   └── ...
 └──  ...
 ```
