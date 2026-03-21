@@ -467,14 +467,18 @@ export async function sendText(
   text: string,
   chatId: string,
   targetMid?: string,
+  options: { appendBotTag?: boolean } = {},
 ): Promise<boolean> {
   try {
     const page = getPage();
     const conversation = getConversationById(chatId);
     const trimmedText = text.trim();
+    const shouldAppendBotTag = options.appendBotTag ?? true;
     const outgoingText =
-      conversation?.isGroup === true ||
-      trimmedText.toUpperCase().endsWith("@BOT")
+      !shouldAppendBotTag
+        ? trimmedText
+        : conversation?.isGroup === true ||
+            trimmedText.toUpperCase().endsWith("@BOT")
         ? text
         : trimmedText.length
           ? `${trimmedText} @BOT`
@@ -503,7 +507,8 @@ export async function sendText(
     logger.info("Text message sent", {
       length: outgoingText.length,
       reply: !!targetMid,
-      botTagAttached: conversation?.isGroup !== true,
+      botTagAttached:
+        shouldAppendBotTag && conversation?.isGroup !== true,
     });
     return true;
   } catch (err) {

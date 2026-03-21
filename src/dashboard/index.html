@@ -1149,6 +1149,60 @@
       flex-shrink: 0;
     }
 
+    .live-command-bar {
+      border-top: 1px solid #1a1a1a;
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #000;
+      flex-shrink: 0;
+    }
+
+    .live-command-input {
+      flex: 1;
+      min-width: 0;
+      background: #121212;
+      border: 1px solid #2a2a2a;
+      color: #fff;
+      border-radius: 999px;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-family: var(--mono);
+    }
+
+    .live-command-input:focus {
+      outline: none;
+      border-color: #4A5DF9;
+    }
+
+    .live-command-send {
+      border: 1px solid #2d3555;
+      color: #fff;
+      background: #3745B5;
+      border-radius: 999px;
+      padding: 9px 14px;
+      font-size: 12px;
+      font-family: var(--mono);
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    .live-command-send:disabled {
+      opacity: 0.65;
+      cursor: not-allowed;
+    }
+
+    .live-command-status {
+      font-size: 11px;
+      color: #8f94a2;
+      font-family: var(--mono);
+      min-height: 14px;
+      padding: 0 14px 8px;
+      background: #000;
+      flex-shrink: 0;
+    }
+
     .live-pill {
       font-size: 10px;
       font-family: var(--mono);
@@ -1429,6 +1483,23 @@
 
       .live-activity {
         padding: 6px 10px;
+      }
+
+      .live-command-bar {
+        padding: 8px 10px;
+      }
+
+      .live-command-input {
+        padding: 9px 12px;
+        font-size: 12px;
+      }
+
+      .live-command-send {
+        padding: 8px 12px;
+      }
+
+      .live-command-status {
+        padding: 0 12px 8px;
       }
     }
 
@@ -2392,6 +2463,17 @@
           <div class="live-scroll-spacer"></div>
           ${renderMessageGroups(groups, botId)}
         </div>
+        <div class="live-command-bar">
+          <input
+            id="liveCommandInput"
+            class="live-command-input"
+            type="text"
+            placeholder="Type a command, e.g. /gif cat"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();executeLiveCommand();}"
+          />
+          <button id="liveCommandSend" class="live-command-send" onclick="executeLiveCommand()">Execute</button>
+        </div>
+        <div class="live-command-status" id="liveCommandStatus"></div>
         <div class="live-activity">
           ${state.liveActivity.length === 0
               ? '<span class="live-pill">no events yet</span>'
@@ -2457,6 +2539,55 @@
           if (state.view === "live" || !silentRender) renderView();
         },
       );
+    }
+
+    async function executeLiveCommand() {
+      const chatId = state.liveSelectedChatId;
+      if (!chatId) {
+        showToast("Select a conversation first");
+        return;
+      }
+
+      const input = document.getElementById("liveCommandInput");
+      const button = document.getElementById("liveCommandSend");
+      const status = document.getElementById("liveCommandStatus");
+      const command = String(input?.value || "").trim();
+
+      if (!command) {
+        showToast("Type a command first");
+        return;
+      }
+
+      if (button) button.disabled = true;
+      if (status) status.textContent = "Executing command...";
+
+      try {
+        const response = await fetch("/api/commands/execute", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chatId, command }),
+        });
+
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || `HTTP ${response.status}`);
+        }
+
+        if (input) input.value = "";
+
+        const commandName = payload.classifiedCommand?.commandName || "command";
+        if (status) status.textContent = `Executed: ${commandName}`;
+        showToast(`Executed: ${commandName}`);
+
+        await refreshAll();
+        refreshLiveSelection(chatId);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (status) status.textContent = `Command failed: ${message}`;
+        showToast(`Command failed: ${message}`);
+      } finally {
+        if (button) button.disabled = false;
+      }
     }
 
     window.addEventListener("resize", () => {

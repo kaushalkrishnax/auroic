@@ -27,13 +27,18 @@ import { fileURLToPath } from "url";
 import logger from "@/utils/logger.js";
 import { eventBus } from "@/events.js";
 import { BOT_FBID, reloadConfig } from "@/runtime/index.js";
+import { classifyCommand } from "@/command/command.js";
 import { getAllConversations } from "@/db/queries/conversations.js";
+import { getLatestMessages } from "@/db/queries/messages.js";
 import { getAllMessages } from "@/db/queries/messages.js";
 import { getAllUsers } from "@/db/queries/users.js";
 import { getAllMedia } from "@/db/queries/media.js";
 import { getAllReactions } from "@/db/queries/reactions.js";
 import { getAllOutgoing } from "@/db/queries/outgoing.js";
+import { insertOutgoing } from "@/db/queries/outgoing.js";
 import { COMMAND_REGISTRY } from "@/command/commandRegistry.js";
+import { executeAction } from "@/router/dispatcher.js";
+import { emitEvent } from "@/events.js";
 import {
   getCommandConfigs,
   getSettingsPayload,
@@ -44,6 +49,7 @@ import {
 } from "@/db/queries/config.js";
 import { getKokoroTtsOptions } from "@/runtime/tts.js";
 import type { AppEvent } from "@/events.js";
+import type { ActionContext, Message } from "@/types/index.js";
 
 // Paths
 
@@ -295,6 +301,108 @@ app.post("/api/commands/save", async (c) => {
     replaceCommandConfigs(sanitizedRows);
     reloadConfig();
     return c.json({ success: true });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
+app.post("/api/commands/execute", async (c) => {
+  try {
+    const body = await c.req.json<{ chatId?: string; command?: string }>();
+    const chatId = String(body.chatId ?? "").trim();
+    const rawCommand = String(body.command ?? "").trim();
+
+    if (!chatId) {
+      return c.json({ error: "chatId is required" }, 400);
+    }
+
+    if (!rawCommand) {
+      return c.json({ error: "command is required" }, 400);
+    }
+
+    const classified = await classifyCommand(rawCommand);
+    if (!classified) {
+      return c.json({ error: "No matching command found" }, 400);
+    }
+
+    const latest = getLatestMessages(chatId, 1, true);
+    const targetMessage = latest[latest.length - 1];
+
+    if (!targetMessage) {
+      return c.json(
+        { error: "No message context found for this conversation" },
+        404,
+      );
+    }
+
+    const decision = {
+      type: classified.actionType,
+      target: "C1",
+      effort: classified.actionType === "text" ? "medium" : null,
+      title: classified.query || classified.commandName,
+      reason: `Dashboard command (${classified.commandName})`,
+    } as const;
+
+    const context: ActionContext = {
+      chatId,
+      message: targetMessage as Message,
+      history: [],
+      candidates: [rawCommand],
+      decision,
+      targetMessageId: targetMessage.messageId,
+      targetTextContent: targetMessage.textContent,
+      classifiedCommand: classified,
+    };
+
+    let resultText: string | null = null;
+    let executionError: string | null = null;
+
+    try {
+      resultText = await executeAction(context);
+    } catch (err) {
+      executionError = (err as Error).message;
+      logger.error("Dashboard command execution failed", {
+        chatId,
+        commandName: classified.commandName,
+        error: executionError,
+      });
+    }
+
+    insertOutgoing({
+      conversationId: chatId,
+      targetMessageId: targetMessage.messageId,
+      actionType: decision.type,
+      effortLevel: decision.effort,
+      intentLabel: decision.title,
+      messageContent: resultText,
+      executionStatus: resultText !== null ? "sent" : "failed",
+      platformMessageId: null,
+      executionError,
+    });
+
+    emitEvent({
+      type: "OUTGOING",
+      chatId,
+      actionType: decision.type,
+      content: resultText,
+    });
+
+    if (resultText === null) {
+      return c.json(
+        {
+          success: false,
+          classifiedCommand: classified,
+          error: executionError || "Command execution failed",
+        },
+        500,
+      );
+    }
+
+    return c.json({
+      success: true,
+      classifiedCommand: classified,
+      resultText,
+    });
   } catch (err) {
     return c.json({ error: (err as Error).message }, 500);
   }

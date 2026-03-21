@@ -19,11 +19,15 @@ import {
   initInstagramSession,
   disconnectBrowser,
 } from "@/automation/session.js";
+import { navigateToChat } from "@/automation/navigation.js";
+import { runWithAutomationLock } from "@/automation/executionLock.js";
+import { sendText } from "@/automation/chat.js";
 import { attachDataMidToDOM } from "@/automation/chat.js";
 import { eventBus } from "@/events.js";
 import type { AppEvent } from "@/events.js";
 import { processMessage } from "@/router/pipeline.js";
 import { initKokoro } from "./runtime/tts.js";
+import { getAllConversations } from "@/db/queries/conversations.js";
 
 interface ConversationTracker {
   sessionStartTime: number;
@@ -52,11 +56,58 @@ function trackProcessedMid(mid: string): void {
 
 let shuttingDown = false;
 
+const SHUTDOWN_SIGNOFF_TEXT = "Signing off...Meet you again";
+
+async function broadcastShutdownSignoff(): Promise<void> {
+  const conversations = getAllConversations();
+  if (!conversations.length) return;
+
+  logger.info("Broadcasting shutdown sign-off", {
+    totalConversations: conversations.length,
+  });
+
+  let sentCount = 0;
+
+  for (const conversation of conversations) {
+    const chatId = conversation.conversationId;
+
+    try {
+      await runWithAutomationLock("shutdown-signoff", chatId, async () => {
+        await initInstagramSession();
+        await navigateToChat(chatId);
+        const sent = await sendText(
+          SHUTDOWN_SIGNOFF_TEXT,
+          chatId,
+          undefined,
+          { appendBotTag: false },
+        );
+
+        if (!sent) {
+          throw new Error("sendText returned false");
+        }
+      });
+
+      sentCount += 1;
+    } catch (err) {
+      logger.warn("Failed to send shutdown sign-off", {
+        chatId,
+        error: (err as Error).message,
+      });
+    }
+  }
+
+  logger.info("Shutdown sign-off completed", {
+    sentCount,
+    totalConversations: conversations.length,
+  });
+}
+
 function registerShutdown(): void {
   const shutdown = async (signal: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info(`Received ${signal} — shutting down gracefully…`);
+    await broadcastShutdownSignoff();
     await disconnectBrowser();
     closeDB();
     closeConfigDB();
