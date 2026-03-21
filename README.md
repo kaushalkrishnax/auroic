@@ -49,10 +49,10 @@ Everything runs on your machine. No cloud relay. No credential storage beyond yo
 
 ## Features
 
-- **🤖 Intelligent Message Routing** — Local GGUF model classifies messages and determines appropriate actions without LLM overhead
+- **🤖 Intelligent Message Routing** — Local Ollama router model classifies messages and determines appropriate actions without LLM overhead
 - **💬 Context-Aware Responses** — Maintains conversation history and generates human-like replies using OpenAI-compatible APIs
 - **🎭 Rich Media Automation** — Send GIFs, stickers, voice notes, and play music
-- **🗣️ Local TTS** — ONNX-based Kokoro TTS for generating natural voice notes (optional)
+- **🗣️ Local TTS** — Kokoro JS-based TTS for generating natural voice notes (optional)
 - **⚡ Real-Time Processing** — WebSocket interception for instant message handling
 - **🔒 Local-First** — All processing happens on your machine; credentials never leave your system
 - **📊 Live Dashboard** — Web UI at `localhost:3789` for monitoring and configuration
@@ -95,7 +95,7 @@ Each incoming message goes through this sequence:
 3. **Detect triggers** — mentions (e.g. `@auroic.ai`), hashtags (e.g. `#bot`), keywords (e.g. `hi auroic`), or direct replies to a bot message. If matched, the trigger text is replaced with `@BOT` before routing. Replies to bot messages are auto-tagged `@BOT` using the `replyToMessageId` stored in the DB — no DOM scraping needed.
 4. **Check for command triggers** — If the message contains command keywords (e.g., `/gif`, `play music`, `send voice note`), classify and execute the command directly.
 5. **Build a sliding context window** — last 5 processed messages as history (H1–H5) and up to 3 unprocessed user messages as candidates (C1–C3).
-6. **Invoke the router** — a local `node-llama-cpp` GGUF model classifies the window and returns a structured decision: `TYPE`, `TARGET`, `EFFORT`, `TITLE`. Target slots above C3 (e.g. C4, C5) are clamped to C3.
+6. **Invoke the router** — a local Ollama model classifies the window and returns a structured decision: `TYPE`, `TARGET`, `EFFORT`, `TITLE`. Target slots above C3 (e.g. C4, C5) are clamped to C3.
 7. **Resolve the target message** — the router's `Cx` slot is mapped back to a real candidate using right-alignment offset (the window is always right-aligned to C3).
 8. **Dispatch the action** via `src/router/dispatcher.ts`.
 9. **Mark all candidates processed** — the entire candidate batch is marked, preventing leftover messages from re-entering the next pipeline run.
@@ -104,10 +104,10 @@ Per-message **processing locks** in SQLite prevent duplicate handling on crash r
 
 ### Two-Model Strategy
 
-| Stage  | Model                           | Purpose                                                                                               |
-| ------ | ------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Router | Local GGUF via `node-llama-cpp` | Fast, free classification — action type, target, effort level                                         |
-| LLM    | OpenAI-compatible API           | Text generation and translation, called only when router says `text` or when commands need generation |
+| Stage  | Model                 | Purpose                                                                                               |
+| ------ | --------------------- | ----------------------------------------------------------------------------------------------------- |
+| Router | Local Ollama model    | Fast, free classification — action type, target, effort level                                         |
+| LLM    | OpenAI-compatible API | Text generation and translation, called only when router says `text` or when commands need generation |
 
 The router is a **custom fine-tuned model** — [`auroic-router-0.6b`](https://github.com/kaushalkrishnax/auroic-router). It takes a history window (H1–H5, oldest to newest) and candidate messages (C1–C3) and returns a structured decision:
 
@@ -116,7 +116,7 @@ The router is a **custom fine-tuned model** — [`auroic-router-0.6b`](https://g
 - **TITLE** — a canonical hint passed to the next LLM call or action handler (e.g. the emoji name for reactions, or a search query for GIFs and stickers)
 - **EFFORT** — how capable a model is needed (`low`, `medium`, `high`), applied at runtime to select the appropriate LLM from `config.db`
 
-Running locally via `node-llama-cpp` means routing adds zero API cost and near-zero latency. The expensive LLM is only invoked when the router explicitly asks for it.
+Running locally via Ollama means routing adds zero API cost and near-zero latency. The expensive LLM is only invoked when the router explicitly asks for it.
 
 ### Action Types
 
@@ -135,8 +135,8 @@ Running locally via `node-llama-cpp` means routing adds zero API cost and near-z
 
 Configuration is split into two tiers:
 
-- **`.env`** — Boot-time secrets (`AI_API_KEY`, `INSTAGRAM_USERNAME`, `INSTAGRAM_PASSWORD`, `CHROMIUM_PROFILE_DIR`, `DB_PATH`, `INSTAGRAM_CHAT_IDS`). Immutable after start. `INSTAGRAM_CHAT_IDS` is a comma-separated list of chat IDs to monitor.
-- **`config.db`** — SQLite database containing all tunables: trigger lists, LLM system prompt, model names per effort level, router model path/prompt/options, token caps, command configurations, TTS settings. No sensitive data. Configuration is **hot-reloaded** via the dashboard or API without restart.
+- **`.env`** — Boot-time secrets (`AI_API_KEY`, `INSTAGRAM_USERNAME`, `INSTAGRAM_PASSWORD`) and local path overrides (`CHROMIUM_PROFILE_DIR`, `DB_PATH`, `CONFIG_DB_PATH`). Immutable after start.
+- **`config.db`** — SQLite database containing all tunables: trigger lists, LLM system prompt, model names per effort level, router host/model/prompt/options, token caps, command configurations, TTS settings. No sensitive data. Configuration is **hot-reloaded** via the dashboard or API without restart.
 
 ### Database
 
@@ -207,14 +207,14 @@ Commands are managed via `config.db` and can be enabled/disabled, aliased, and f
 
 **Location:** `src/runtime/tts.ts`
 
-Auroic uses the **Kokoro-82M ONNX model** for local text-to-speech generation. TTS is **optional** but enables voice note commands.
+Auroic uses the **`kokoro-js` package** for local text-to-speech generation. TTS is **optional** but enables voice note commands.
 
 **Features:**
 
-- Local ONNX inference via `onnxruntime-node`
+- Local inference via `kokoro-js`
 - Multiple voice options (American/British, Female/Male)
 - Supports quantized (q8) and full precision (fp16, fp32) models
-- Automatic IPA phonemization using CMU Pronouncing Dictionary
+- Simple runtime setup without custom phonemizer/dictionary plumbing
 - Integrates with PipeWire virtual audio for seamless Instagram voice message recording
 
 **Supported Voices:**
@@ -233,9 +233,9 @@ Auroic uses the **Kokoro-82M ONNX model** for local text-to-speech generation. T
 | Requirement         | Version/Details                               |
 | ------------------- | --------------------------------------------- |
 | Node.js             | ≥ 20 LTS                                      |
-| llama.cpp           | For loading GGUF router model via `node-llama-cpp` |
-| Router Model        | `auroic-router-0.6b.q8_0.gguf` (**Required**) |
-| TTS Model           | Kokoro-82M ONNX (Optional, for voice notes)   |
+| Ollama              | Local router inference service (`ollama serve`) |
+| Router Model        | `auroic-router:latest` in Ollama (**Required**) |
+| TTS Runtime         | `kokoro-js` package (included in dependencies) |
 | Docker              | ≥ 24 _(optional)_                             |
 | PipeWire/PulseAudio | Required for TTS voice note recording (Linux) |
 
@@ -243,77 +243,40 @@ Auroic uses the **Kokoro-82M ONNX model** for local text-to-speech generation. T
 
 ### Model Setup
 
-#### 1. Router Model (**Required**)
+#### 1. Router Model in Ollama (**Required**)
 
-The router model is **essential** for Auroic to function. Download and place it in your project:
+The router model is **essential** for Auroic to function. Create it in Ollama using the bundled Modelfile:
 
 ```bash
-# Create model directory
-mkdir -p models/auroic-router
+# Start Ollama service
+ollama serve
 
-# Download the router model (q8 quantized, ~600MB)
-curl -L "https://huggingface.co/kaushalkrishnax/auroic-router-0.6b/resolve/main/gguf/auroic-router-0.6b.q8_0.gguf?download=true" \
-  -o models/auroic-router/auroic-router-0.6b.q8_0.gguf
+# In another shell, create the router model from Modelfile
+ollama create auroic-router:latest -f models/auroic-router/Modelfile
 
-# Download the Modelfile (configuration)
-curl -L "https://huggingface.co/kaushalkrishnax/auroic-router-0.6b/resolve/main/gguf/Modelfile" \
-  -o models/auroic-router/Modelfile
+# Verify model is available
+ollama list
 ```
 
-**File structure:**
+**Expected local files:**
 
 ```
 models/auroic-router/
-├── auroic-router-0.6b.q8_0.gguf
 └── Modelfile
 ```
 
-The router uses `node-llama-cpp` to load the GGUF model directly. Override paths via:
-
-```bash
-ROUTER_MODEL_PATH=./models/auroic-router/auroic-router-0.6b.q8_0.gguf
-ROUTER_MODELFILE_PATH=./models/auroic-router/Modelfile
-```
+Set `router.hostUrl` and `router.model` in `config.db` (Dashboard → Config → Router).
 
 #### 2. TTS Model (**Optional**)
 
-The Kokoro TTS model enables voice note generation. If you want this feature, download one of the following:
+Kokoro TTS now uses `kokoro-js`. You do not need to manually manage ONNX files, runtime binaries, or dictionary assets.
 
 ```bash
-# Create TTS model directories
-mkdir -p models/kokoro-tts/onnx
-mkdir -p models/kokoro-tts/voices
-
-# Option 1: FP16 model (~160MB, higher quality)
-curl -L "https://huggingface.co/onnx-community/Kokoro-82M-ONNX/resolve/main/onnx/model_fp16.onnx?download=true" \
-  -o models/kokoro-tts/onnx/model_fp16.onnx
-
-# Option 2: Quantized Q8 model (~82MB, faster, recommended)
-curl -L "https://huggingface.co/onnx-community/Kokoro-82M-ONNX/resolve/main/onnx/model_quantized.onnx?download=true" \
-  -o models/kokoro-tts/onnx/model_quantized.onnx
+# Optional: pre-warm Kokoro assets once during setup
+npm run dev
 ```
 
-Download at least one voice file (e.g., `af_nicole.bin`):
-
-```bash
-curl -L "https://huggingface.co/onnx-community/Kokoro-82M-ONNX/resolve/main/voices/af_nicole.bin?download=true" \
-  -o models/kokoro-tts/voices/af_nicole.bin
-```
-
-**File structure:**
-
-```
-models/kokoro-tts/
-├── onnx/
-│   ├── model_fp16.onnx       # OR
-│   └── model_quantized.onnx  # (q8)
-├── voices/
-│   ├── af_nicole.bin
-│   └── ...
-└──  ...
-```
-
-**Download additional voices** from the [Kokoro ONNX repository](https://huggingface.co/onnx-community/Kokoro-82M-ONNX/tree/main/voices).
+On first TTS use, `kokoro-js` downloads required model assets automatically.
 
 ### Configuration
 
@@ -340,11 +303,10 @@ AI_API_KEY=your_api_key
 # Paths (optional overrides)
 DB_PATH=./data/state.db
 PROFILE_DIR=./data/chrome-auroic
-ROUTER_MODEL_PATH=./models/auroic-router/auroic-router-0.6b.q8_0.gguf
-ROUTER_MODELFILE_PATH=./models/auroic-router/Modelfile
+CONFIG_DB_PATH=./data/config.db
 ```
 
-**Runtime configuration** (triggers, prompts, models, commands, TTS) is stored in `config.db` and can be edited via:
+**Runtime configuration** (triggers, prompts, LLM effort models, router host/model/options, commands, TTS) is stored in `config.db` and can be edited via:
 
 - **Dashboard UI**: `http://localhost:3789` → Config tab
 - **API**: `POST /config` with JSON payload
@@ -485,7 +447,7 @@ docker run -d \
 docker logs -f auroic
 ```
 
-**Important:** Ensure models are downloaded before starting Docker container. The container expects models at `/app/models`.
+**Important:** Ensure Ollama is reachable from the app and `auroic-router:latest` exists in Ollama before starting the bot.
 
 ---
 
@@ -535,7 +497,7 @@ All trigger fields accept multiple values. `onReply: true` activates the bot whe
 ---
 
 ## Acknowledgments
-- The open-source community for GGUF, ONNX, and Playwright tools
+- The open-source community for Ollama, Kokoro, and Playwright tools
 - Hugging Face for hosting the models
 - The inspiration from various AI assistants and Instagram automation tools that came before
 - The users who provided feedback and ideas during development

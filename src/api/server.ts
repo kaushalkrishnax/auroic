@@ -124,17 +124,7 @@ app.get("/events", (c) => {
 app.get("/config", async (c) => {
   try {
     const settings = getSettingsPayload();
-    const routerModelPath =
-      process.env.ROUTER_MODEL_PATH ??
-      settings.router?.model ??
-      "models/auroic-router/auroic-router-0.6b.q8_0.gguf";
-    const config: Record<string, unknown> = {
-      ...settings,
-      router: {
-        ...(settings.router ?? {}),
-        model: routerModelPath,
-      },
-    };
+    const config: Record<string, unknown> = { ...settings };
     // Merge runtime-detected bot identity so the dashboard can identify outgoing messages
     config.instagram = {
       ...((config.instagram as Record<string, unknown>) ?? {}),
@@ -171,9 +161,6 @@ app.post("/config", async (c) => {
 
     const existing = getSettingsPayload();
     const merged = { ...existing, ...body } as unknown as RuntimeSettingsPayload;
-    if (merged.router && typeof merged.router === "object") {
-      delete (merged.router as Record<string, unknown>).model;
-    }
     upsertSettingsPayload(merged);
     reloadConfig();
     return c.json({ success: true });

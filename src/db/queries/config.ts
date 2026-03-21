@@ -23,6 +23,7 @@ export interface RuntimeSettingsPayload {
     output: { maxTokens: number; timeout: number };
   };
   router: {
+    hostUrl: string;
     model: string;
     think?: boolean;
     systemPrompt?: string;
@@ -119,7 +120,8 @@ Single natural message only.`,
   },
 
   router: {
-    model: "models/auroic-router/auroic-router-0.6b.q8_0.gguf",
+    hostUrl: "http://127.0.0.1:11434",
+    model: "auroic-router:latest",
     think: true,
     systemPrompt: `You are the Auroic Router.
 
@@ -208,24 +210,17 @@ export function getSettingsPayload(): RuntimeSettingsPayload {
 
 export function upsertSettingsPayload(payload: RuntimeSettingsPayload): void {
   const db = getConfigDB();
-  const { model: _ignoredRouterModel, ...routerForDb } =
-    payload.router ?? DEFAULT_RUNTIME_SETTINGS.router;
-  const payloadForDb = {
-    ...payload,
-    // Router model path is env-driven and should not be persisted in config.db.
-    router: routerForDb,
-  };
 
   db.insert(settingsTable)
     .values({
       id: 1,
-      ...payloadForDb,
+      ...payload,
       updatedAt: nowIso(),
     })
     .onConflictDoUpdate({
       target: settingsTable.id,
       set: {
-        ...payloadForDb,
+        ...payload,
         updatedAt: nowIso(),
       },
     })

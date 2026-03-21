@@ -2784,7 +2784,7 @@
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
       <div style="font-size:13px;color:var(--subtle)">
         <div>Edit <code style="color:var(--accent)">config.db/settings</code> — changes apply after save</div>
-        <div style="margin-top:4px">Router model path is read-only and sourced from .env (ROUTER_MODEL_PATH).</div>
+        <div style="margin-top:4px">Router host/model are read-only and sourced from .env (ROUTER_HOST_URL, ROUTER_MODEL).</div>
       </div>
       <div style="display:flex;gap:8px">
         <button class="btn secondary" onclick="loadConfig().then(()=>renderView())">↻ Reload</button>
@@ -2901,7 +2901,7 @@
     }
 
     function isReadonlyConfigPath(path) {
-      return path === "router.model";
+      return false;
     }
 
     function getConfigStringOptions(path) {
