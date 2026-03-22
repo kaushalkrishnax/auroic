@@ -485,6 +485,16 @@ async function processPassiveBatch(chatId: string): Promise<void> {
       return;
     }
 
+    if (decision.type === "text" && !!targetCandidate.replyToMessageId) {
+      logger.info("Passive batch: skipping text action for reply candidate", {
+        chatId,
+        target: decision.target,
+        targetMid: targetCandidate.messageId,
+        replyToMessageId: targetCandidate.replyToMessageId,
+      });
+      return;
+    }
+
     const targetMid = targetCandidate.messageId;
     const dbMessage = getMessageByMid(targetMid);
     if (!dbMessage) {
