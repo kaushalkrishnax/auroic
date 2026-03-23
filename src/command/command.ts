@@ -23,7 +23,12 @@ const registryByName = new Map(
 
 function asActionType(value: string): ActionType | null {
   const lower = value.trim().toLowerCase();
-  if (lower === "text" || lower === "ignore" || lower === "react" || lower === "media") {
+  if (
+    lower === "text" ||
+    lower === "ignore" ||
+    lower === "react" ||
+    lower === "media"
+  ) {
     return lower;
   }
   return null;
@@ -36,14 +41,19 @@ function normalizeToken(token: string): string {
     .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
 }
 
-function buildCandidates(): CommandSelection[] {
-  const configRows = getCommandRows();
+function extractCommandFromDelimiters(text: string): string | null {
+  const match = text.match(/\/\s*(\S.*?\S|\S)\s*\//);
+  if (!match) return null;
+  return match[1].trim();
+}
 
-  return configRows
+function buildCandidates(): CommandSelection[] {
+  return getCommandRows()
     .filter((row) => row.isEnabled)
     .map((row) => {
       const registryDef = registryByName.get(row.command);
-      const actionType = asActionType(registryDef?.actionType ?? "text") ?? "text";
+      const actionType =
+        asActionType(registryDef?.actionType ?? "text") ?? "text";
 
       const aliases = new Set(
         row.aliases.map((alias) => normalizeToken(alias)).filter(Boolean),
@@ -54,29 +64,27 @@ function buildCandidates(): CommandSelection[] {
         row.filterKeywords.map((word) => normalizeToken(word)).filter(Boolean),
       );
 
-      return {
-        commandName: row.command,
-        actionType,
-        aliases,
-        filterKeywords,
-      };
+      return { commandName: row.command, actionType, aliases, filterKeywords };
     });
 }
 
 function deriveQuery(text: string, wordsToStrip: Set<string>): string {
-  const tokens = text.split(/\s+/).filter(Boolean);
-
-  const kept = tokens.filter((token) => {
-    const normalized = normalizeToken(token);
-    if (!normalized) return false;
-    if (normalized === "bot") return false;
-    return !wordsToStrip.has(normalized);
-  });
-
-  return kept.join(" ").trim();
+  return text
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter((token) => {
+      const normalized = normalizeToken(token);
+      if (!normalized || normalized === "bot") return false;
+      return !wordsToStrip.has(normalized);
+    })
+    .join(" ")
+    .trim();
 }
 
-function scoreCandidate(inputTokens: Set<string>, candidate: CommandSelection): number {
+function scoreCandidate(
+  inputTokens: Set<string>,
+  candidate: CommandSelection,
+): number {
   let score = 0;
   for (const alias of candidate.aliases) {
     if (inputTokens.has(alias)) score += 1;
@@ -84,32 +92,39 @@ function scoreCandidate(inputTokens: Set<string>, candidate: CommandSelection): 
   return score;
 }
 
-export async function hasCommandTriggerKeyword(text: string): Promise<boolean> {
-  const normalizedInput = text.trim();
-  if (!normalizedInput) return false;
-
-  const tokens = new Set(
-    normalizedInput
-      .split(/\s+/)
-      .map(normalizeToken)
-      .filter(Boolean),
-  );
-
-  const candidates = buildCandidates();
-  return candidates.some((candidate) => scoreCandidate(tokens, candidate) > 0);
+function tokenize(text: string): Set<string> {
+  return new Set(text.split(/\s+/).map(normalizeToken).filter(Boolean));
 }
 
-export async function classifyCommand(text: string): Promise<ClassifiedCommand | null> {
-  const normalizedInput = text.trim();
-  if (!normalizedInput) return null;
-
-  const tokens = new Set(
-    normalizedInput
+function buildStripWords(candidate: CommandSelection): Set<string> {
+  return new Set<string>([
+    ...candidate.aliases,
+    ...candidate.filterKeywords,
+    ...candidate.commandName
+      .toLowerCase()
       .split(/\s+/)
       .map(normalizeToken)
       .filter(Boolean),
-  );
+  ]);
+}
 
+export async function hasCommandTriggerKeyword(text: string): Promise<boolean> {
+  const commandContent = extractCommandFromDelimiters(text.trim());
+  if (!commandContent) return false;
+
+  const tokens = tokenize(commandContent);
+  return buildCandidates().some(
+    (candidate) => scoreCandidate(tokens, candidate) > 0,
+  );
+}
+
+export async function classifyCommand(
+  text: string,
+): Promise<ClassifiedCommand | null> {
+  const commandContent = extractCommandFromDelimiters(text.trim());
+  if (!commandContent) return null;
+
+  const tokens = tokenize(commandContent);
   const candidates = buildCandidates();
 
   let best: { candidate: CommandSelection; score: number } | null = null;
@@ -122,17 +137,7 @@ export async function classifyCommand(text: string): Promise<ClassifiedCommand |
 
   if (!best) return null;
 
-  const stripWords = new Set<string>([
-    ...best.candidate.aliases,
-    ...best.candidate.filterKeywords,
-    ...best.candidate.commandName
-      .toLowerCase()
-      .split(/\s+/)
-      .map((word) => normalizeToken(word))
-      .filter(Boolean),
-  ]);
-
-  const query = deriveQuery(normalizedInput, stripWords);
+  const query = deriveQuery(commandContent, buildStripWords(best.candidate));
 
   return {
     commandName: best.candidate.commandName,
@@ -142,9 +147,7 @@ export async function classifyCommand(text: string): Promise<ClassifiedCommand |
   };
 }
 
-export async function executeCommand(
-  context: ActionContext,
-): Promise<void> {
+export async function executeCommand(context: ActionContext): Promise<void> {
   const command = context.classifiedCommand!;
   const handler = getCommandHandler(command.commandName);
 

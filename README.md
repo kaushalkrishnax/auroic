@@ -10,11 +10,10 @@ app_port: 3789
 
 # Auroic — Instagram AI Assistant
 
-> **⚠️ Beta Version** — This project is under active development. Features may change, and some edge cases are still being refined.
+**Auroic** is a local-first Instagram DM automation agent.
+It runs a headless Chromium session, reads Instagram events in real time, routes each message with a local model, and executes actions like text replies, reactions, GIF/sticker sends, voice notes, and music playback.
 
-**Auroic** is a local-first Instagram DM automation agent. It runs a headless Chromium browser, intercepts Instagram's internal GraphQL traffic and WebSocket events to read messages in real time, routes each message through a local classification model, and dispatches intelligent actions — text replies, emoji reactions, GIFs, stickers, voice notes, music playback, and more — via LLM calls only when needed.
-
-Everything runs on your machine. No cloud relay. No credential storage beyond your browser profile.
+All processing is local. Credentials stay in your browser profile.
 
 ---
 
@@ -49,17 +48,14 @@ Everything runs on your machine. No cloud relay. No credential storage beyond yo
 
 ## Features
 
-- **🤖 Intelligent Message Routing** — Local Ollama router model classifies messages and determines appropriate actions without LLM overhead
-- **💬 Context-Aware Responses** — Maintains conversation history and generates human-like replies using OpenAI-compatible APIs
-- **🎭 Rich Media Automation** — Send GIFs, stickers, voice notes, and play music
-- **🗣️ Local TTS** — Kokoro JS-based TTS for generating natural voice notes (optional)
-- **⚡ Real-Time Processing** — WebSocket interception for instant message handling
-- **🔒 Local-First** — All processing happens on your machine; credentials never leave your system
-- **📊 Live Dashboard** — Web UI at `localhost:3789` for monitoring and configuration
-- **🎯 Smart Triggers** — Mentions, hashtags, keywords, and reply-based activation
-- **🔄 Hot Reload** — Update configuration without restart via dashboard
-- **📝 Command System** — Extensible command registry for custom actions (GIF search, voice notes, music playback, web search, etc.)
-- **🛡️ Production-Ready** — Processing locks, crash recovery, graceful shutdown, Docker support
+- **Local router** for fast low-cost action selection
+- **Context-aware text replies** via OpenAI-compatible APIs
+- **Media actions**: reactions, GIFs, stickers, voice notes, and music
+- **Optional local TTS** with `kokoro-js`
+- **Real-time message handling** via WebSocket interception
+- **Dashboard** at `localhost:3789` for live monitoring and config
+- **Hot-reload config** from dashboard/API without restart
+- **Reliability features**: processing locks, reconnects, graceful shutdown
 
 ---
 
@@ -67,80 +63,65 @@ Everything runs on your machine. No cloud relay. No credential storage beyond yo
 
 ### Browser & Session
 
-**Location:** `src/automation/`
+Playwright runs a persistent headless Chromium profile, so login sessions survive restarts.
+Instagram data is captured through:
+- GraphQL responses at startup (inbox/thread bootstrap)
+- WebSocket frames for real-time events (new/edit/delete/reaction)
 
-- Playwright launches a **persistent headless Chromium context** using a local profile directory. The same login session persists across restarts — no re-authentication needed.
-- A single page navigates to Instagram. Two interception layers run in parallel:
-  - **GraphQL** (`/api/graphql` POST responses) — used only at startup to seed the inbox (`PolarisDirectInboxQuery`) and load thread history (`IGDThreadDetailMainViewContainerQuery`).
-  - **WebSocket** (`/ig_message_sync` frames) — used for all real-time events: new messages, edits, deletes, and reactions.
-- On first boot, the bot **auto-detects its own Facebook ID** from the `viewer` field in the GraphQL mailbox response. No manual config needed — it is set in memory at runtime.
-- Page and context crash/close events reset internal state; the next event triggers an automatic reconnect.
+The bot auto-detects its own Facebook ID at boot and reconnects automatically after page/context failures.
 
 ### Event Bus
 
-**Location:** `src/events.ts`
-
-- All parsed events (`NEW_MESSAGE`, `EDIT`, `DELETE`, `REACTION_ADD/REMOVE`, `ROUTER_DECISION`, `OUTGOING`, `CONFIG_CHANGED`) are emitted on a central `EventEmitter`.
-- `src/index.ts` subscribes to this bus and calls the processing pipeline for new messages and edits.
-- The SSE endpoint in the HTTP server also subscribes to the same bus to stream events to the dashboard in real time.
+All parsed events are emitted through a shared `EventEmitter`.
+The pipeline consumes these events for processing, and the dashboard SSE stream uses the same event source.
 
 ### Processing Pipeline
 
-**Location:** `src/router/pipeline.ts`
+Each message follows this flow:
 
-Each incoming message goes through this sequence:
+1. Load message by `mid`.
+2. Skip if self-message, already processed, locked, or empty.
+3. Apply triggers (mention/hashtag/reply) and normalize trigger text to `@BOT`.
+4. Check command format with slash delimiters (examples: `/gif/`, `/ play music /`). If matched, execute command directly.
+5. Build context window: H1-H5 history + C1-C3 candidates.
+6. Ask the local router for `TYPE`, `TARGET`, `EFFORT`, `TITLE`.
+7. Resolve target candidate and dispatch action.
+8. Mark candidate batch processed.
 
-1. **Load** the message from SQLite by `mid`.
-2. **Skip** if it's the bot's own message, already processed, locked by a concurrent run, or has no text.
-3. **Detect triggers** — mentions (e.g. `@auroic.ai`), hashtags (e.g. `#bot`), keywords (e.g. `hi auroic`), or direct replies to a bot message. If matched, the trigger text is replaced with `@BOT` before routing. Replies to bot messages are auto-tagged `@BOT` using the `replyToMessageId` stored in the DB — no DOM scraping needed.
-4. **Check for command triggers** — If the message contains command keywords (e.g., `/gif`, `play music`, `send voice note`), classify and execute the command directly.
-5. **Build a sliding context window** — last 5 processed messages as history (H1–H5) and up to 3 unprocessed user messages as candidates (C1–C3).
-6. **Invoke the router** — a local Ollama model classifies the window and returns a structured decision: `TYPE`, `TARGET`, `EFFORT`, `TITLE`. Target slots above C3 (e.g. C4, C5) are clamped to C3.
-7. **Resolve the target message** — the router's `Cx` slot is mapped back to a real candidate using right-alignment offset (the window is always right-aligned to C3).
-8. **Dispatch the action** via `src/router/dispatcher.ts`.
-9. **Mark all candidates processed** — the entire candidate batch is marked, preventing leftover messages from re-entering the next pipeline run.
-
-Per-message **processing locks** in SQLite prevent duplicate handling on crash recovery. Stale locks older than 2 minutes are cleared at boot.
+SQLite processing locks prevent duplicate handling and stale locks are cleared at boot.
 
 ### Two-Model Strategy
 
-| Stage  | Model                 | Purpose                                                                                               |
-| ------ | --------------------- | ----------------------------------------------------------------------------------------------------- |
-| Router | Local Ollama model    | Fast, free classification — action type, target, effort level                                         |
-| LLM    | OpenAI-compatible API | Text generation and translation, called only when router says `text` or when commands need generation |
+| Stage  | Model                 | Purpose |
+| ------ | --------------------- | ------- |
+| Router | Local Ollama model    | Fast local decision: action type, target, effort |
+| LLM    | OpenAI-compatible API | Text generation/translation only when needed |
 
-The router is a **custom fine-tuned model** — [`auroic-router-0.6b`](https://github.com/kaushalkrishnax/auroic-router). It takes a history window (H1–H5, oldest to newest) and candidate messages (C1–C3) and returns a structured decision:
-
-- **TYPE** — what action to take (`text`, `react`, `media`, `ignore`)
-- **TARGET** — which candidate to act on (`C1`–`C3`); values above C3 are clamped
-- **TITLE** — a canonical hint passed to the next LLM call or action handler (e.g. the emoji name for reactions, or a search query for GIFs and stickers)
-- **EFFORT** — how capable a model is needed (`low`, `medium`, `high`), applied at runtime to select the appropriate LLM from `config.db`
-
-Running locally via Ollama means routing adds zero API cost and near-zero latency. The expensive LLM is only invoked when the router explicitly asks for it.
+Router output fields:
+- `TYPE`: `text`, `react`, `media`, `ignore`
+- `TARGET`: candidate slot (`C1`-`C3`)
+- `TITLE`: hint for downstream action (emoji/search query/etc.)
+- `EFFORT`: model tier (`low`, `medium`, `high`)
 
 ### Action Types
 
-**Location:** `src/router/actions/`
-
-| Type     | Behavior                                                                                                                                                                                                                  |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `text`   | Generates a reply via LLM. History sent as H1–H5 context block, then a dummy `assistant: ok` turn, then only the target candidate as the final user message — clean turn structure with zero noise from other candidates. |
-| `react`  | Adds an emoji reaction to the target message. Emoji name comes from `TITLE`.                                                                                                                                              |
-| `ignore` | Skips all further processing. No network call, no DB write.                                                                                                                                                               |
-| `media`  | Tries sticker first; falls back to GIF in the same already-open dialog if no sticker result is found. Search term comes from `TITLE`.                                                                                     |
+| Type     | Behavior |
+| -------- | -------- |
+| `text`   | Generate reply with LLM using history + target message |
+| `react`  | Add emoji reaction from `TITLE` |
+| `ignore` | Skip processing |
+| `media`  | Try sticker first, then GIF fallback using `TITLE` |
 
 ### Runtime Configuration
 
-**Location:** `src/runtime/`
+Configuration has two layers:
 
-Configuration is split into two tiers:
+- **`.env`**: boot-time secrets and optional path overrides
+- **`config.db`**: runtime settings (triggers, prompts, models, router, commands, TTS)
 
-- **`.env`** — Boot-time secrets (`AI_API_KEY`, `INSTAGRAM_USERNAME`, `INSTAGRAM_PASSWORD`) and local path overrides (`CHROMIUM_PROFILE_DIR`, `DB_PATH`, `CONFIG_DB_PATH`). Immutable after start.
-- **`config.db`** — SQLite database containing all tunables: trigger lists, LLM system prompt, model names per effort level, router host/model/prompt/options, token caps, command configurations, TTS settings. No sensitive data. Configuration is **hot-reloaded** via the dashboard or API without restart.
+`config.db` changes hot-reload via dashboard/API.
 
 ### Database
-
-**Location:** `src/db/`
 
 Two SQLite databases via **Drizzle ORM**:
 
@@ -161,9 +142,7 @@ Two SQLite databases via **Drizzle ORM**:
 
 ### HTTP API & Dashboard
 
-**Location:** `src/api/server.ts`
-
-Hono HTTP server running on **http://localhost:3789**. Open it in a browser to see all collected data in real time and tune the full config without touching any files directly.
+Hono server runs on **http://localhost:3789** for live monitoring and config edits.
 
 | Method     | Route                             | Description                                                                    |
 | ---------- | --------------------------------- | ------------------------------------------------------------------------------ |
@@ -180,15 +159,13 @@ Hono HTTP server running on **http://localhost:3789**. Open it in a browser to s
 
 ### Chat Interaction
 
-**Location:** `src/automation/chat.ts`
-
-DOM operations (reactions, reply-select, message send, media automation) use **index-based alignment** between the SQLite message window and the live DOM message groups. The window is capped to `min(10, DOM groups, DB rows)` to prevent index mismatches. This is more reliable than text-based DOM search.
+DOM actions use index-based alignment between DB rows and DOM message groups.
+Window size is capped to `min(10, DOM groups, DB rows)` to avoid index mismatches.
 
 ### Command System
 
-**Location:** `src/command/`
-
-The command system provides extensible, keyword-based actions that bypass the router when explicitly triggered. Commands are classified using token matching against configured aliases and filter keywords.
+Commands are configurable actions that bypass the router when explicitly triggered.
+They are matched by aliases/keywords and require slash-delimited command text.
 
 **Available Commands:**
 
@@ -197,24 +174,19 @@ The command system provides extensible, keyword-based actions that bypass the ro
 | `send_gif`        | `gif`, `meme`               | media       | Search and send a GIF matching the query          |
 | `send_sticker`    | `sticker`                   | media       | Search and send a sticker                         |
 | `send_voice_note` | `voice`, `speak`            | media       | Generate TTS audio and send as voice note         |
-| `play_music`      | `play`, `music`, `song`     | media       | Find and play music via Instagram's native player |
-| `send_image`      | `create`, `pic`, `generate` | media       | Generate and send an image (TODO)                 |
-| `search_web`      | `search`, `find`, `web`     | text        | Search the web and return results (TODO)          |
+| `play_music`      | `play`, `music`, `song`     | media       | Find and play music via Instagram's native player |         |
 
 Commands are managed via `config.db` and can be enabled/disabled, aliased, and filtered per-command through the dashboard.
 
 ### Text-to-Speech (TTS)
 
-**Location:** `src/runtime/tts.ts`
-
-Auroic uses the **`kokoro-js` package** for local text-to-speech generation. TTS is **optional** but enables voice note commands.
+Auroic uses **`kokoro-js`** for local TTS. TTS is optional and mainly used for voice note commands.
 
 **Features:**
 
 - Local inference via `kokoro-js`
 - Multiple voice options (American/British, Female/Male)
 - Supports quantized (q8) and full precision (fp16, fp32) models
-- Simple runtime setup without custom phonemizer/dictionary plumbing
 - Integrates with PipeWire virtual audio for seamless Instagram voice message recording
 
 **Supported Voices:**
@@ -251,8 +223,8 @@ The router model is **essential** for Auroic to function. Create it in Ollama us
 # Start Ollama service
 ollama serve
 
-# In another shell, create the router model from Modelfile
-ollama create auroic-router:latest -f models/auroic-router/Modelfile
+# Pull the router model (ensure Ollama is running and accessible)
+ollama pull hf.co/kaushalkrishnax/auroic-router-0.6b:Q8_0
 
 # Verify model is available
 ollama list
@@ -294,7 +266,6 @@ nano .env
 # Instagram credentials
 INSTAGRAM_USERNAME=your_instagram_username
 INSTAGRAM_PASSWORD=your_instagram_password
-INSTAGRAM_CHAT_IDS=chat_id_1,chat_id_2,chat_id_3
 
 # OpenAI-compatible API
 AI_API_URL=https://api.openai.com/v1/chat/completions
@@ -453,7 +424,7 @@ docker logs -f auroic
 
 ## Triggers
 
-Configured in `config.db` under `runtime_settings.triggers`:
+Defined in `config.db` under `runtime_settings.triggers`:
 
 ```json
 {
@@ -464,7 +435,7 @@ Configured in `config.db` under `runtime_settings.triggers`:
 }
 ```
 
-All trigger fields accept multiple values. `onReply: true` activates the bot when someone replies directly to one of its messages.
+Each field accepts multiple values. `onReply: true` enables reply-based activation.
 
 **Edit triggers via:**
 
@@ -475,37 +446,35 @@ All trigger fields accept multiple values. `onReply: true` activates the bot whe
 
 ## Reliability
 
-- **Processing locks** — Messages are locked in SQLite before processing. Stale locks (> 2 min) are cleared at boot to recover from unclean shutdowns.
-- **All-candidate mark** — After each pipeline run, all candidates in the batch are marked processed, not just the triggering message, preventing duplicate actions on the next run.
-- **Automatic reconnect** — Browser and page crash/close events reset session state; the next event triggers re-init.
-- **Bot self-filter** — The bot's own `fbId` (auto-detected at runtime) is used to skip its own messages at the event handler, pipeline, and target-resolver levels.
-- **`<think>` block stripping** — Reasoning traces from thinking models are stripped from LLM responses before they are sent.
-- **Graceful shutdown** — `SIGINT`/`SIGTERM` close the DB and disconnect the browser cleanly.
-- **Automation lock** — Serialized execution of automation actions prevents race conditions and DOM conflicts.
+- **Processing locks** in SQLite avoid duplicate handling; stale locks are cleared at boot.
+- **Batch marking** marks candidate messages processed after each run.
+- **Auto reconnect** restores session after browser/page failures.
+- **Self-filtering** ignores bot-owned messages using runtime-detected `fbId`.
+- **`<think>` stripping** removes reasoning traces before sending replies.
+- **Graceful shutdown** closes DB and browser on `SIGINT`/`SIGTERM`.
+- **Automation lock** serializes DOM actions to avoid races.
 
 ---
 
 ## Error Handling
 
-- **Selector failures** — Caught and logged; the chat is skipped for that cycle.
-- **Network failures** — Retried with exponential backoff.
-- **Browser disconnect** — Auto-reconnects on the next poll cycle, re-opens dead tabs.
-- **AI API failures** — Retried; if still failing, the chat is skipped (never crashes).
-- **Rate limits (429/503)** — Respected via `Retry-After` header, queued for retry.
-- **TTS failures** — Commands gracefully degrade; errors logged without crashing the pipeline.
+- Selector failures are logged and that chat cycle is skipped.
+- Network/API failures retry with backoff.
+- Browser disconnects are recovered automatically.
+- Rate limits (`429`/`503`) honor `Retry-After`.
+- TTS failures degrade gracefully without crashing the pipeline.
 
 ---
 
 ## Acknowledgments
 - The open-source community for Ollama, Kokoro, and Playwright tools
 - Hugging Face for hosting the models
-- The inspiration from various AI assistants and Instagram automation tools that came before
 - The users who provided feedback and ideas during development
 
 ---
 
 ## Disclaimer
-This project is for educational and experimental purposes only. Use it responsibly and in accordance with Instagram's terms of service. The author is not liable for any misuse or consequences arising from the use of this software.
+For educational and experimental use only. Use responsibly and follow Instagram's terms of service. The author is not liable for misuse.
 
 ## License
 

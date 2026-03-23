@@ -12,7 +12,6 @@ export type CommandHandler = (context: ActionContext) => Promise<void>;
  */
 export interface CommandDefinition {
   name: string;
-  /** Stable identifier used to look up this command in the DB and map to its handler. */
   handlerName: string;
   actionType: "text" | "ignore" | "react" | "media";
   description: string;
