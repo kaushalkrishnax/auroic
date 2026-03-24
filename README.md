@@ -1,13 +1,3 @@
----
-title: Auroic
-emoji: 🤖
-colorFrom: blue
-colorTo: purple
-sdk: docker
-pinned: false
-app_port: 3789
----
-
 # Auroic — Instagram AI Assistant
 
 **Auroic** is a local-first Instagram DM automation agent.
@@ -487,4 +477,3 @@ This project is licensed under the **[Apache License 2.0](LICENSE)**.
 - **Router Model**: [kaushalkrishnax/auroic-router-0.6b](https://huggingface.co/kaushalkrishnax/auroic-router-0.6b)
 - **TTS Model**: [onnx-community/Kokoro-82M-ONNX](https://huggingface.co/onnx-community/Kokoro-82M-ONNX)
 - **Author**: [Kaushal Krishna](https://github.com/kaushalkrishnax)
-
