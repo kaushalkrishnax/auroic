@@ -42,17 +42,25 @@ export async function executeAction(
   return runWithAutomationLock("execute-action", context.chatId, async () => {
     await prepareActionExecution(context.chatId);
 
-    // If this is a classified command, execute the command handler
     if (classifiedCommand) {
       logger.info("Executing classified command", {
         commandName: classifiedCommand.commandName,
         actionType: classifiedCommand.actionType,
       });
 
-      await executeCommand(context);
-
-      // Command handlers don't return text, so return a placeholder
-      return `[Command: ${classifiedCommand.commandName}]`;
+      try {
+        await executeCommand(context);
+        logger.info("Command execution complete", {
+          commandName: classifiedCommand.commandName,
+        });
+        return `[Command: ${classifiedCommand.commandName}]`;
+      } catch (err) {
+        logger.error("Command execution failed", {
+          commandName: classifiedCommand.commandName,
+          error: (err as Error).message,
+        });
+        throw err;
+      }
     }
 
     const handler = ACTION_HANDLERS[decision.type];

@@ -13,7 +13,7 @@ export async function runWithAutomationLock<T>(
 ): Promise<T> {
   const startedAt = Date.now();
 
-  logger.info("Automation lock: queued", { label, chatId });
+  logger.debug("Automation lock: queued", { label, chatId });
 
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
@@ -25,16 +25,23 @@ export async function runWithAutomationLock<T>(
 
   await previous;
 
-  logger.info("Automation lock: acquired", { label, chatId });
+  logger.debug("Automation lock: acquired", { label, chatId });
 
   try {
     return await task();
   } finally {
     release();
-    logger.info("Automation lock: released", {
+    const heldForMs = Date.now() - startedAt;
+    const releaseDetails = {
       label,
       chatId,
-      heldForMs: Date.now() - startedAt,
-    });
+      heldForMs,
+    };
+
+    if (heldForMs >= 1500) {
+      logger.info("Automation lock: released", releaseDetails);
+    } else {
+      logger.debug("Automation lock: released", releaseDetails);
+    }
   }
 }

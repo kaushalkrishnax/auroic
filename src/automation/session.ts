@@ -19,6 +19,20 @@ import {
 let _context: BrowserContext | null = null;
 let _sessionPage: Page | null = null;
 let _sessionInitialized = false;
+let _dialogPollInterval: ReturnType<typeof setInterval> | null = null;
+
+function clearDialogPolling(): void {
+  if (!_dialogPollInterval) return;
+  clearInterval(_dialogPollInterval);
+  _dialogPollInterval = null;
+}
+
+function startDialogPolling(page: Page): void {
+  clearDialogPolling();
+  _dialogPollInterval = setInterval(() => {
+    handleDialogs(page).catch(() => {});
+  }, 2000);
+}
 
 /* ------------------------------------------------ */
 /* Browser connect                                   */
@@ -58,6 +72,7 @@ export async function connectBrowser(): Promise<{ context: BrowserContext }> {
 
   context.on("close", () => {
     logger.warn("Browser context closed");
+    clearDialogPolling();
     _sessionPage = null;
     _sessionInitialized = false;
     _context = null;
@@ -79,12 +94,14 @@ function attachPageListeners(page: Page): void {
 
   page.on("crash", () => {
     logger.error("Page crashed — resetting session");
+    clearDialogPolling();
     _sessionPage = null;
     _sessionInitialized = false;
   });
 
   page.on("close", () => {
     logger.warn("Page closed — resetting session");
+    clearDialogPolling();
     _sessionPage = null;
     _sessionInitialized = false;
   });
@@ -224,14 +241,12 @@ export async function initInstagramSession(): Promise<void> {
     await performLogin(page);
   }
 
-  setInterval(() => {
-    handleDialogs(page).catch(() => {});
-  }, 2000);
+  startDialogPolling(page);
 
   await page
-    .waitForSelector('div[contenteditable="true"]', { timeout: 10000 })
+    .waitForSelector('div[contenteditable="true"]', { timeout: 5000 })
     .catch(() => {
-      logger.warn("Message input not visible after 10s — continuing anyway", {
+      logger.warn("Message input not visible after 5s — continuing anyway", {
         chatId,
       });
     });
@@ -266,6 +281,8 @@ async function performLogin(page: Page): Promise<void> {
 /* ------------------------------------------------ */
 
 export async function disconnectBrowser(): Promise<void> {
+  clearDialogPolling();
+
   if (_context) {
     try {
       await _context.close();

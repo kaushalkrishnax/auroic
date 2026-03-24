@@ -42,7 +42,7 @@ function normalizeToken(token: string): string {
 }
 
 function extractCommandFromDelimiters(text: string): string | null {
-  const match = text.match(/\/\s*(\S.*?\S|\S)\s*\//);
+  const match = text.match(/\/\s*(\S.*?)(?:\s*\/|$)/);
   if (!match) return null;
   return match[1].trim();
 }
@@ -127,6 +127,11 @@ export async function classifyCommand(
   const tokens = tokenize(commandContent);
   const candidates = buildCandidates();
 
+  if (candidates.length === 0) {
+    logger.warn("No enabled commands in registry");
+    return null;
+  }
+
   let best: { candidate: CommandSelection; score: number } | null = null;
   for (const candidate of candidates) {
     const score = scoreCandidate(tokens, candidate);
@@ -135,9 +140,22 @@ export async function classifyCommand(
     }
   }
 
-  if (!best) return null;
+  if (!best) {
+    logger.debug("No matched command found", {
+      commandContent,
+      tokenCount: tokens.size,
+      candidateCount: candidates.length,
+    });
+    return null;
+  }
 
   const query = deriveQuery(commandContent, buildStripWords(best.candidate));
+
+  logger.debug("Command classified", {
+    commandName: best.candidate.commandName,
+    score: best.score,
+    query,
+  });
 
   return {
     commandName: best.candidate.commandName,

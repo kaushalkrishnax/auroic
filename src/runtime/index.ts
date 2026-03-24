@@ -36,10 +36,20 @@ export function setBotFbid(id: string): void {
 }
 
 export function initRuntimeConfig(): void {
-  initConfigDB(env.configDbPath);
-  ensureConfigSeeded();
-  syncCommandsWithRegistry();
-  reloadConfig();
+  try {
+    initConfigDB(env.configDbPath);
+    ensureConfigSeeded();
+    syncCommandsWithRegistry();
+    if (!reloadConfig()) {
+      throw new Error("Failed to load runtime config");
+    }
+  } catch (err) {
+    logger.error("Fatal error during config initialization", {
+      error: (err as Error).message,
+      stack: (err as Error).stack,
+    });
+    throw err;
+  }
 }
 
 export function reloadConfig(): boolean {

@@ -204,7 +204,7 @@ function trackPassiveMessage(chatId: string, mid: string): void {
 
   state.unprocessedMids.add(mid);
 
-  logger.info("Passive: tracked message", {
+  logger.debug("Passive: tracked message", {
     chatId,
     mid,
     unprocessedCount: state.unprocessedMids.size,
@@ -232,7 +232,7 @@ function trackPassiveMessage(chatId: string, mid: string): void {
   if (!state.passiveFlushTimer) {
     const delayMs = passive.timeThresholdMs;
 
-    logger.info("Passive: starting time trigger", {
+    logger.debug("Passive: starting time trigger", {
       chatId,
       delayMs,
     });
@@ -281,9 +281,9 @@ function resolveTargetCandidateIndex(
   if (!target) return null;
   const match = target.match(/^C(\d+)$/i);
   if (!match) return null;
-  const idx = parseInt(match[1], 10) - 1;
-  if (idx < 0 || idx >= candidateCount) return null;
-  return idx;
+  const slotNum = parseInt(match[1], 10);
+  if (slotNum < 1) return null;
+  return slotNum - 1;
 }
 
 function buildRouterCandidateSlots(candidateTexts: string[]): {
@@ -454,33 +454,46 @@ async function processPassiveBatch(chatId: string): Promise<void> {
 
     const targetIndex = resolveTargetCandidateIndex(
       decision.target,
-      CANDIDATE_SIZE,
+      slotToCandidateIndex.length,
     );
 
-    if (targetIndex === null) {
-      logger.warn("Passive batch decision had unresolved target; skipping", {
+    if (targetIndex === null || targetIndex < 0 || targetIndex >= slotToCandidateIndex.length) {
+      logger.warn("Passive batch decision had invalid target", {
         chatId,
         target: decision.target,
+        targetIndex,
+        slotCount: slotToCandidateIndex.length,
       });
       return;
     }
 
-    const mappedCandidateIndex =
-      targetIndex === null ? null : slotToCandidateIndex[targetIndex];
+    const mappedCandidateIndex = slotToCandidateIndex[targetIndex];
 
     if (mappedCandidateIndex === null || mappedCandidateIndex === undefined) {
-      logger.warn("Passive batch target resolved to placeholder slot; skipping", {
+      logger.warn("Passive batch target resolved to placeholder slot", {
         chatId,
         target: decision.target,
+        targetIndex,
+      });
+      return;
+    }
+
+    if (mappedCandidateIndex < 0 || mappedCandidateIndex >= candidateMessages.length) {
+      logger.warn("Passive batch mapped candidate index out of range", {
+        chatId,
+        target: decision.target,
+        mappedIndex: mappedCandidateIndex,
+        candidateCount: candidateMessages.length,
       });
       return;
     }
 
     const targetCandidate = candidateMessages[mappedCandidateIndex];
     if (!targetCandidate) {
-      logger.warn("Passive batch target candidate unavailable; skipping", {
+      logger.warn("Passive batch target candidate unavailable", {
         chatId,
         target: decision.target,
+        index: mappedCandidateIndex,
       });
       return;
     }
@@ -613,7 +626,7 @@ async function processCandidates(chatId: string): Promise<void> {
       }
 
       const ageMs = Date.now() - candidate.queuedAtMs;
-      logger.info("Candidate age check", {
+      logger.debug("Candidate age check", {
         chatId,
         mid: msg.messageId,
         ageMs,
@@ -782,11 +795,19 @@ export async function processMessage(
   const config = getConfig();
   const botId = config.instagram.fbId ?? "";
 
-  // Load the specific message
   const msg = getMessageByMid(mid);
-  if (!msg) return;
-  if (msg.userId === botId) return;
-  if (!msg.textContent) return;
+  if (!msg) {
+    logger.warn("Message not found in DB yet", { chatId, mid });
+    return;
+  }
+  if (msg.userId === botId) {
+    logger.debug("Skipping message from bot", { chatId, mid });
+    return;
+  }
+  if (!msg.textContent) {
+    logger.debug("Skipping message with no text", { chatId, mid });
+    return;
+  }
 
   try {
     const { content: candidateText, isDirectMention } = getCandidateContent(
@@ -801,8 +822,8 @@ export async function processMessage(
 
     const state = getConversationState(chatId);
 
-    // Avoid duplicate queue entries for the same message.
     if (state.candidates.some((c) => c.messageId === mid)) {
+      logger.debug("Message already queued", { chatId, mid });
       return;
     }
 
@@ -812,7 +833,6 @@ export async function processMessage(
       queuedAtMs: Date.now(),
     });
 
-    // Keep queue bounded even if events outpace processing.
     while (state.candidates.length > BATCH_HARD_LIMIT) {
       const dropped = state.candidates.shift();
       if (!dropped) break;
@@ -842,6 +862,11 @@ export async function processMessage(
 
     scheduleCandidateProcessing(chatId, state);
   } catch (err) {
+    logger.error("Error processing message", {
+      chatId,
+      mid,
+      error: (err as Error).message,
+    });
     throw err;
   }
 }

@@ -35,7 +35,7 @@ export interface DomMessageSnapshot {
 /* Helper utilities                                  */
 /* ------------------------------------------------ */
 
-async function visible(locator: Locator, timeout = 5000): Promise<boolean> {
+async function visible(locator: Locator, timeout = 2500): Promise<boolean> {
   try {
     await locator.waitFor({ state: "visible", timeout });
     return (await locator.count()) > 0;
@@ -45,9 +45,9 @@ async function visible(locator: Locator, timeout = 5000): Promise<boolean> {
 }
 
 async function click(locator: Locator): Promise<boolean> {
-  if (!(await visible(locator))) return false;
+  if (!(await visible(locator, 2000))) return false;
   try {
-    await locator.click({ timeout: 5000 });
+    await locator.click({ timeout: 2500 });
     return true;
   } catch {
     return false;
@@ -55,9 +55,9 @@ async function click(locator: Locator): Promise<boolean> {
 }
 
 async function hover(locator: Locator): Promise<boolean> {
-  if (!(await visible(locator))) return false;
+  if (!(await visible(locator, 2000))) return false;
   try {
-    await locator.hover({ timeout: 5000 });
+    await locator.hover({ timeout: 2500 });
     return true;
   } catch {
     return false;
@@ -124,8 +124,7 @@ async function findMessageContainer(
 
   const dbSlice = dbMessages.slice(-take);
 
-  logger.info("Messages in DB window", { count: dbSlice.length });
-  logger.info("DB mids in window", { mids: dbSlice.map((m) => m.messageId) });
+  logger.debug("Messages in DB window", { chatId, count: dbSlice.length });
 
   const index = dbSlice.findIndex((m) => m.messageId === targetMid);
 
@@ -161,22 +160,37 @@ export async function attachDataMidToDOM(
     return false;
   }
 
-  const attempts = 6;
+  const attempts = 5;
+  let lastError: Error | null = null;
 
   for (let i = 0; i < attempts; i++) {
-    const container = await findMessageContainer(chatId, targetMid);
-    if (container) {
-      await setDataMidOnContainer(container, targetMid);
-      logger.info("Attached data-mid to DOM message", { chatId, targetMid });
-      return true;
+    try {
+      const container = await findMessageContainer(chatId, targetMid);
+      if (container) {
+        await setDataMidOnContainer(container, targetMid);
+        logger.info("Attached data-mid to DOM message", { chatId, targetMid, attempt: i + 1 });
+        return true;
+      }
+    } catch (err) {
+      lastError = err as Error;
+      logger.debug("Attempt failed to attach data-mid", {
+        chatId,
+        targetMid,
+        attempt: i + 1,
+        error: lastError.message,
+      });
     }
 
-    await sleep(150);
+    if (i < attempts - 1) {
+      await sleep(90 + i * 30);
+    }
   }
 
-  logger.warn("Unable to attach data-mid to DOM message", {
+  logger.warn("Unable to attach data-mid to DOM message after max attempts", {
     chatId,
     targetMid,
+    attempts,
+    lastError: lastError?.message,
   });
   return false;
 }
@@ -193,69 +207,108 @@ export async function attachDataMidsForRecentWindow(
     return 0;
   }
 
-  const attempts = 6;
+  const attempts = 5;
+  let maxStamped = 0;
 
   for (let attempt = 0; attempt < attempts; attempt++) {
-    const page = getPage();
-    const groups = page
-      .locator(SELECTORS.messageList)
-      .locator(SELECTORS.messageGroup);
+    try {
+      const page = getPage();
+      const groups = page
+        .locator(SELECTORS.messageList)
+        .locator(SELECTORS.messageGroup);
 
-    const groupCount = await groups.count();
-    const dbMessages = getLatestMessages(chatId, windowSize);
-    const take = Math.min(windowSize, groupCount, dbMessages.length);
+      const groupCount = await groups.count();
+      const dbMessages = getLatestMessages(chatId, windowSize);
+      const take = Math.min(windowSize, groupCount, dbMessages.length);
 
-    if (!take) {
-      await sleep(150);
-      continue;
-    }
-
-    const domStart = groupCount - take;
-    const dbSlice = dbMessages.slice(-take);
-    let stamped = 0;
-
-    for (let i = 0; i < take; i++) {
-      const mid = dbSlice[i]?.messageId;
-      if (!mid) continue;
-
-      const group = groups.nth(domStart + i);
-      try {
-        const currentMid = await group.getAttribute("data-mid", {
-          timeout: 5000,
-        });
-        if (currentMid === mid) continue;
-
-        await group.evaluate(
-          (el, resolvedMid) => {
-            el.setAttribute("data-mid", resolvedMid);
-          },
-          mid,
-          { timeout: 5000 },
-        );
-      } catch {
-        // DOM changed during iteration — break to retry on next attempt
-        break;
+      if (!take) {
+        if (attempt < attempts - 1) {
+          await sleep(100);
+        }
+        continue;
       }
 
-      stamped++;
+      const domStart = groupCount - take;
+      const dbSlice = dbMessages.slice(-take);
+      let stamped = 0;
+
+      for (let i = 0; i < take; i++) {
+        const mid = dbSlice[i]?.messageId;
+        if (!mid) continue;
+
+        const group = groups.nth(domStart + i);
+        try {
+          const currentMid = await group.getAttribute("data-mid", {
+            timeout: 3000,
+          });
+          if (currentMid === mid) {
+            stamped++;
+            continue;
+          }
+
+          await group.evaluate(
+            (el, resolvedMid) => {
+              el.setAttribute("data-mid", resolvedMid);
+            },
+            mid,
+            { timeout: 3000 },
+          );
+          stamped++;
+        } catch (elemErr) {
+          logger.debug("Failed to stamp element", {
+            chatId,
+            index: i,
+            error: (elemErr as Error).message,
+          });
+        }
+      }
+
+      if (stamped > 0) {
+        maxStamped = Math.max(maxStamped, stamped);
+      }
+
+      if (stamped === take) {
+        logger.info("Initialised data-mid map for recent thread window", {
+          chatId,
+          windowSize,
+          mapped: take,
+          stamped,
+          attempt: attempt + 1,
+        });
+        return take;
+      }
+
+      if (attempt < attempts - 1) {
+        await sleep(100 + attempt * 30);
+      }
+    } catch (err) {
+      logger.debug("Attempt failed to map data-mids", {
+        chatId,
+        attempt: attempt + 1,
+        error: (err as Error).message,
+      });
+      if (attempt < attempts - 1) {
+        await sleep(100);
+      }
     }
-
-    logger.info("Initialised data-mid map for recent thread window", {
-      chatId,
-      windowSize,
-      mapped: take,
-      stamped,
-    });
-
-    return take;
   }
 
-  logger.warn("Unable to initialise recent data-mid map", {
-    chatId,
-    windowSize,
-  });
+  if (maxStamped > 0) {
+    logger.warn("Partially initialised data-mid map", {
+      chatId,
+      windowSize,
+      stamped: maxStamped,
+      attempts,
+    });
+  } else {
+    logger.error("Unable to initialise any data-mid mappings", {
+      chatId,
+      windowSize,
+      attempts,
+    });
+  }
 
-  return 0;
+  return maxStamped;
 }
 
 /**
@@ -276,28 +329,79 @@ export async function stampInitialDataMids(
   const messageList = page.locator(SELECTORS.messageList);
   const allGroups = messageList.locator(SELECTORS.messageGroup);
 
-  const groupCount = await allGroups.count();
-  if (!groupCount) return;
+  let stamped = 0;
+  const attempts = 4;
 
-  const dbMessages = getLatestMessages(chatId, limit);
-  const take = Math.min(limit, groupCount, dbMessages.length);
-  if (!take) return;
-
-  const dbSlice = dbMessages.slice(-take);
-  const domStart = groupCount - take;
-
-  for (let i = 0; i < take; i++) {
-    const group = allGroups.nth(domStart + i);
-    try {
-      const existing = await group.getAttribute("data-mid", { timeout: 5000 });
-      if (existing) continue;
-      const mid = dbSlice[i].messageId;
-      await group.evaluate((el, m) => el.setAttribute("data-mid", m), mid, {
-        timeout: 5000,
-      });
-    } catch {
-      // DOM changed, skip this element
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const groupCount = await allGroups.count();
+    if (!groupCount) {
+      if (attempt < attempts - 1) {
+        await sleep(100);
+        continue;
+      }
+      logger.warn("No message groups found after retries", { chatId });
+      return;
     }
+
+    const dbMessages = getLatestMessages(chatId, limit);
+    const take = Math.min(limit, groupCount, dbMessages.length);
+    if (!take) {
+      if (attempt < attempts - 1) {
+        await sleep(100);
+        continue;
+      }
+      logger.warn("No DB messages available", { chatId });
+      return;
+    }
+
+    const dbSlice = dbMessages.slice(-take);
+    const domStart = groupCount - take;
+    stamped = 0;
+
+    for (let i = 0; i < take; i++) {
+      const group = allGroups.nth(domStart + i);
+      try {
+        const existing = await group.getAttribute("data-mid", { timeout: 2000 });
+        if (existing === dbSlice[i].messageId) {
+          stamped++;
+          continue;
+        }
+
+        const mid = dbSlice[i].messageId;
+        await group.evaluate((el, m) => el.setAttribute("data-mid", m), mid, {
+          timeout: 2000,
+        });
+        stamped++;
+      } catch (err) {
+        logger.debug("Failed to stamp data-mid on element", {
+          chatId,
+          index: i,
+          error: (err as Error).message,
+        });
+      }
+    }
+
+    if (stamped === take) {
+      logger.info("Successfully stamped initial data-mids", {
+        chatId,
+        stamped,
+        targetCount: take,
+      });
+      return;
+    }
+
+    if (attempt < attempts - 1) {
+      await sleep(100);
+    }
+  }
+
+  if (stamped > 0) {
+    logger.warn("Partially stamped initial data-mids", {
+      chatId,
+      stamped,
+    });
+  } else {
+    logger.error("Failed to stamp any initial data-mids", { chatId });
   }
 }
 
@@ -387,7 +491,7 @@ async function resolveTargetContainer(
     await page.mouse.wheel(0, -300);
   }
 
-  await sleep(500);
+  await sleep(150);
 
   const secondTry = await findMessageContainer(chatId, targetMid);
   if (!secondTry) {
@@ -435,7 +539,7 @@ export async function selectToReply(
           attempt,
           attempts,
         });
-        await sleep(150);
+        await sleep(100);
         continue;
       }
 
@@ -451,7 +555,7 @@ export async function selectToReply(
         attempt,
         attempts,
       });
-      await sleep(150);
+      await sleep(100);
     }
 
     return false;
