@@ -305,15 +305,12 @@ export async function initInstagramSession(): Promise<void> {
 
   if (!page.url().includes("/direct/")) {
     await page.goto("https://www.instagram.com/direct/inbox/", {
-      waitUntil: "domcontentloaded",
-      timeout: 15000,
+      waitUntil: "domcontentloaded"
     });
   }
 
   await page
-    .waitForURL(/\/direct\/(?:inbox|t\/[^/?#]+)(?:[/?#]|$)/, {
-      timeout: 15000,
-    })
+    .waitForURL(/\/direct\/(?:inbox|t\/[^/?#]+)(?:[/?#]|$)/)
     .catch(() => undefined);
 
   startDialogPolling(page);
