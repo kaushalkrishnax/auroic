@@ -9,6 +9,7 @@ import type { BrowserContext, Page } from "playwright";
 import logger from "@/utils/logger.js";
 import getConfig from "@/runtime/index.js";
 import { attachDataMidsForRecentWindow } from "@/automation/chat.js";
+import { getStartupConversationIds } from "@/db/queries/conversations.js";
 import SELECTORS from "@/instagram/selectors.js";
 import {
   initMailbox,
@@ -20,6 +21,9 @@ let _context: BrowserContext | null = null;
 let _sessionPage: Page | null = null;
 let _sessionInitialized = false;
 let _dialogPollInterval: ReturnType<typeof setInterval> | null = null;
+let _mailboxInitialized = false;
+let _mailboxInitPromise: Promise<void> = Promise.resolve();
+let _resolveMailboxInit: (() => void) | null = null;
 
 function clearDialogPolling(): void {
   if (!_dialogPollInterval) return;
@@ -30,8 +34,64 @@ function clearDialogPolling(): void {
 function startDialogPolling(page: Page): void {
   clearDialogPolling();
   _dialogPollInterval = setInterval(() => {
-    handleDialogs(page).catch(() => {});
+    handleDialogs(page).catch((err) => {
+      logger.debug("Dialog polling step failed", {
+        error: err instanceof Error ? err.message : err,
+      });
+    });
   }, 2000);
+}
+
+function extractChatIdFromUrl(url: string): string | null {
+  const match = url.match(/\/direct\/t\/([^/?#]+)/);
+  return match?.[1] ?? null;
+}
+
+function resetMailboxInitState(): void {
+  _mailboxInitialized = false;
+  _mailboxInitPromise = new Promise<void>((resolve) => {
+    _resolveMailboxInit = resolve;
+  });
+}
+
+function markMailboxInitialized(): void {
+  if (_mailboxInitialized) return;
+  _mailboxInitialized = true;
+  if (_resolveMailboxInit) {
+    _resolveMailboxInit();
+    _resolveMailboxInit = null;
+  }
+}
+
+async function waitForMailboxInitialization(timeoutMs = 45000): Promise<void> {
+  if (_mailboxInitialized) return;
+
+  await Promise.race([
+    _mailboxInitPromise,
+    new Promise<void>((_, reject) => {
+      setTimeout(() => {
+        reject(new Error("Mailbox metadata initialization timed out"));
+      }, timeoutMs);
+    }),
+  ]);
+}
+
+function getStartupCandidates(configuredChatIds: string[]): string[] {
+  return getStartupConversationIds(configuredChatIds);
+}
+
+async function openChatById(page: Page, chatId: string): Promise<boolean> {
+  await page.goto(`https://www.instagram.com/direct/t/${chatId}/`, {
+    waitUntil: "domcontentloaded",
+    timeout: 15000,
+  });
+
+  await page.waitForURL(new RegExp(`/direct/t/${chatId}(?:[/?#]|$)`), {
+    timeout: 8000,
+  });
+
+  await page.waitForSelector(SELECTORS.messageInput, { timeout: 8000 });
+  return true;
 }
 
 /* ------------------------------------------------ */
@@ -123,6 +183,7 @@ function attachPageListeners(page: Page): void {
       if (postData.includes("PolarisDirectInboxQuery")) {
         const data = await response.json();
         initMailbox(data);
+        markMailboxInitialized();
         return;
       }
 
@@ -216,21 +277,17 @@ export async function initInstagramSession(): Promise<void> {
   const { context } = await connectBrowser();
 
   const config = getConfig();
-  const chatId = config.instagram.chatIds[0];
-  const chatUrl = chatId
-    ? `https://www.instagram.com/direct/t/${chatId}/`
-    : "https://www.instagram.com/direct/inbox/";
+  const chatUrl = "https://www.instagram.com/direct/inbox/";
 
-  if (!chatId) {
-    logger.warn(
-      "No enabled Instagram chat IDs in config.db; opening inbox without thread target",
-    );
-  }
-
-  logger.info("Opening Instagram session…", { chatId });
+  logger.info("Opening Instagram session…", {
+    configuredChatId: config.instagram.chatIds[0] ?? null,
+    startupMode: "db-first-most-recent",
+  });
 
   const pages = context.pages();
   const page = pages.length ? pages[0] : await context.newPage();
+
+  resetMailboxInitState();
 
   /* Attach listeners BEFORE navigation */
   attachPageListeners(page);
@@ -239,19 +296,54 @@ export async function initInstagramSession(): Promise<void> {
 
   if (page.url().includes("/accounts/login")) {
     await performLogin(page);
+    await page
+      .waitForURL(/\/direct\/(?:inbox|t\/[^/?#]+)(?:[/?#]|$)/, {
+        timeout: 20000,
+      })
+      .catch(() => undefined);
   }
+
+  if (!page.url().includes("/direct/")) {
+    await page.goto("https://www.instagram.com/direct/inbox/", {
+      waitUntil: "domcontentloaded",
+      timeout: 15000,
+    });
+  }
+
+  await page
+    .waitForURL(/\/direct\/(?:inbox|t\/[^/?#]+)(?:[/?#]|$)/, {
+      timeout: 15000,
+    })
+    .catch(() => undefined);
 
   startDialogPolling(page);
 
-  await page
-    .waitForSelector('div[contenteditable="true"]', { timeout: 5000 })
-    .catch(() => {
-      logger.warn("Message input not visible after 5s — continuing anyway", {
-        chatId,
-      });
-    });
+  let startupCandidates = getStartupCandidates(config.instagram.chatIds);
+  let startupChatId: string | null = null;
 
-  logger.info("Instagram session ready", { chatId });
+  if (!startupChatId && startupCandidates.length === 0) {
+    await page.goto(chatUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: 15000,
+    });
+    await waitForMailboxInitialization();
+    startupCandidates = getStartupCandidates(config.instagram.chatIds);
+  }
+
+  if (!startupChatId && startupCandidates.length > 0) {
+    const primaryChatId = startupCandidates[0];
+    await openChatById(page, primaryChatId);
+    startupChatId = primaryChatId;
+  }
+
+  if (!startupChatId) {
+    throw new Error("No startup chat available after mailbox initialization");
+  }
+
+  logger.info("Instagram session ready", {
+    startupChatId,
+    configuredChatId: config.instagram.chatIds[0] ?? null,
+  });
 
   _sessionPage = page;
   _sessionInitialized = true;

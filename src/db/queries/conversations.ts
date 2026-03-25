@@ -1,6 +1,6 @@
-import { eq } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 import { getDB } from "@/db/index.js";
-import { conversations, conversationParticipants } from "@/db/schema.js";
+import { messages, conversations, conversationParticipants } from "@/db/schema.js";
 import type {
   SelectConversation,
   SelectConversationParticipant,
@@ -54,6 +54,61 @@ export function getConversationById(
 
 export function getAllConversations(): SelectConversation[] {
   return getDB().select().from(conversations).all();
+}
+
+export function getStartupConversationIds(
+  configuredChatIds: string[],
+): string[] {
+  const db = getDB();
+
+  const latestByConversation = db
+    .select({
+      conversationId: messages.conversationId,
+      latestTimestampMs: sql<number>`max(${messages.timestampMs})`,
+    })
+    .from(messages)
+    .groupBy(messages.conversationId)
+    .all();
+
+  const latestMap = new Map<string, number>();
+  for (const row of latestByConversation) {
+    if (!row.conversationId) continue;
+    latestMap.set(
+      row.conversationId,
+      Number.isFinite(row.latestTimestampMs)
+        ? Number(row.latestTimestampMs)
+        : 0,
+    );
+  }
+
+  const dbConversations = db
+    .select({
+      conversationId: conversations.conversationId,
+      createdAt: conversations.createdAt,
+    })
+    .from(conversations)
+    .orderBy(desc(conversations.createdAt))
+    .all();
+
+  const orderedDbIds = dbConversations
+    .slice()
+    .sort((a, b) => {
+      const latestA = latestMap.get(a.conversationId) ?? 0;
+      const latestB = latestMap.get(b.conversationId) ?? 0;
+      if (latestA !== latestB) return latestB - latestA;
+
+      const createdA = String(a.createdAt ?? "");
+      const createdB = String(b.createdAt ?? "");
+      return createdB.localeCompare(createdA);
+    })
+    .map((row) => String(row.conversationId || "").trim())
+    .filter(Boolean);
+
+  const configuredIds = configuredChatIds
+    .map((id) => String(id || "").trim())
+    .filter(Boolean);
+
+  return [...new Set([...orderedDbIds, ...configuredIds])];
 }
 
 export function createConversationParticipants(

@@ -92,7 +92,11 @@ app.get("/events", (c) => {
 
   const cleanup = () => {
     eventBus.off("event", send);
-    writer.close().catch(() => {});
+    writer.close().catch((err) => {
+      logger.debug("SSE writer close failed", {
+        error: (err as Error).message,
+      });
+    });
   };
 
   eventBus.on("event", send);

@@ -531,7 +531,15 @@ export async function selectToReply(
         return false;
       }
 
-      await msg.scrollIntoViewIfNeeded().catch(() => undefined);
+      try {
+        await msg.scrollIntoViewIfNeeded();
+      } catch (err) {
+        logger.debug("Failed to scroll target message into view", {
+          targetMid,
+          attempt,
+          error: (err as Error).message,
+        });
+      }
 
       if (!(await hover(msg))) {
         logger.warn("Target message hover failed", {
@@ -649,6 +657,23 @@ async function openMediaTab(
   return mediaDialog;
 }
 
+async function closeMediaByFocusingComposer(page: Page): Promise<void> {
+  const input = page.locator(SELECTORS.messageInput).first();
+
+  if (!(await visible(input, 2000))) {
+    logger.warn("Cannot close media tab via message input: input not visible");
+    return;
+  }
+
+  try {
+    await input.click({ timeout: 2000 });
+  } catch (err) {
+    logger.warn("Failed to close media tab via message input", {
+      error: (err as Error).message,
+    });
+  }
+}
+
 /**
  * Sanitizes media search query
  */
@@ -680,13 +705,21 @@ async function searchAndSelectMedia(
   }
 
   await searchInput.fill(sanitizeMediaTitle(title));
-  await sleep(2000);
+  const items = mediaDialog.locator(SELECTORS.mediaItemButton);
+  try {
+    await items.first().waitFor({ state: "visible", timeout: 3500 });
+  } catch {
+    return false;
+  }
 
-  const result = mediaDialog
-    .locator(SELECTORS.mediaItemButton)
-    .nth(Math.floor(Math.random() * maxRandomIndex));
+  const count = await items.count();
+  const cap = maxRandomIndex > 0 ? Math.min(maxRandomIndex, count) : count;
 
-  return await click(result);
+  for (let i = 0; i < cap; i++) {
+    if (await click(items.nth(i))) return true;
+  }
+
+  return false;
 }
 
 export async function sendSticker(
@@ -838,6 +871,7 @@ export async function playMusic(query: string): Promise<boolean> {
         return false;
       }
     } else {
+      await closeMediaByFocusingComposer(page);
       logger.warn("No music results found for query", { query });
       return false;
     }
