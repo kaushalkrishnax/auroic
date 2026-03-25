@@ -82,15 +82,12 @@ function getStartupCandidates(configuredChatIds: string[]): string[] {
 
 async function openChatById(page: Page, chatId: string): Promise<boolean> {
   await page.goto(`https://www.instagram.com/direct/t/${chatId}/`, {
-    waitUntil: "domcontentloaded",
-    timeout: 15000,
+    waitUntil: "domcontentloaded"
   });
 
-  await page.waitForURL(new RegExp(`/direct/t/${chatId}(?:[/?#]|$)`), {
-    timeout: 8000,
-  });
+  await page.waitForURL(new RegExp(`/direct/t/${chatId}(?:[/?#]|$)`))
 
-  await page.waitForSelector(SELECTORS.messageInput, { timeout: 8000 });
+  await page.waitForSelector(SELECTORS.messageInput);
   return true;
 }
 
@@ -297,9 +294,7 @@ export async function initInstagramSession(): Promise<void> {
   if (page.url().includes("/accounts/login")) {
     await performLogin(page);
     await page
-      .waitForURL(/\/direct\/(?:inbox|t\/[^/?#]+)(?:[/?#]|$)/, {
-        timeout: 20000,
-      })
+      .waitForURL(/\/direct\/(?:inbox|t\/[^/?#]+)(?:[/?#]|$)/)
       .catch(() => undefined);
   }
 
@@ -320,8 +315,7 @@ export async function initInstagramSession(): Promise<void> {
 
   if (!startupChatId && startupCandidates.length === 0) {
     await page.goto(chatUrl, {
-      waitUntil: "domcontentloaded",
-      timeout: 15000,
+      waitUntil: "domcontentloaded"
     });
     await waitForMailboxInitialization();
     startupCandidates = getStartupCandidates(config.instagram.chatIds);
