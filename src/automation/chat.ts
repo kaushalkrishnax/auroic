@@ -108,12 +108,9 @@ async function findMessageContainer(
       if (await group.isVisible()) {
         domGroups.unshift(group);
       }
-    } catch {
-      
-    }
+    } catch {}
   }
 
-  
   if (domGroups.length < take) {
     domGroups.length = 0;
     for (let i = groupCount - take; i < groupCount; i++) {
@@ -359,7 +356,9 @@ export async function stampInitialDataMids(
     for (let i = 0; i < take; i++) {
       const group = allGroups.nth(domStart + i);
       try {
-        const existing = await group.getAttribute("data-mid", { timeout: 2000 });
+        const existing = await group.getAttribute("data-mid", {
+          timeout: 2000,
+        });
         if (existing === dbSlice[i].messageId) {
           stamped++;
           continue;
@@ -476,7 +475,6 @@ async function resolveTargetContainer(
     return null;
   }
 
-  
   const page = getPage();
   const messageList = page.locator(SELECTORS.messageList).first();
   try {
@@ -592,16 +590,20 @@ function sanitizeMediaTitle(title: string): string {
  * Opens the media dialog and navigates to the requested tab index.
  * Returns the dialog Locator on success, null on any failure.
  */
-async function openMediaTab(page: Page, tabIndex: number): Promise<Locator | null> {
-  
+async function openMediaTab(
+  page: Page,
+  tabIndex: number,
+): Promise<Locator | null> {
   const input = page.locator(SELECTORS.messageInput).first();
   if (!(await visible(input))) {
     logger.warn("openMediaTab: message input not visible — composer not ready");
     return null;
   }
 
-  
-  let dialog = page.locator(SELECTORS.dialog).last();
+  let dialog = page
+    .locator(SELECTORS.dialog)
+    .filter({ has: page.locator(SELECTORS.tabList) })
+    .last();
   const alreadyOpen = await dialog.isVisible().catch(() => false);
 
   if (!alreadyOpen) {
@@ -613,6 +615,7 @@ async function openMediaTab(page: Page, tabIndex: number): Promise<Locator | nul
 
     try {
       await btn.click();
+      await sleep(400);
     } catch (err) {
       logger.warn("openMediaTab: media button click failed", {
         error: (err as Error).message,
@@ -620,48 +623,64 @@ async function openMediaTab(page: Page, tabIndex: number): Promise<Locator | nul
       return null;
     }
 
-    
-    dialog = page.locator(SELECTORS.dialog).last();
+    dialog = page
+      .locator(SELECTORS.dialog)
+      .filter({ has: page.locator(SELECTORS.tabList) })
+      .last();
     if (!(await visible(dialog))) {
-      logger.warn("openMediaTab: dialog did not appear after media button click");
+      logger.warn(
+        "openMediaTab: dialog did not appear after media button click",
+      );
       return null;
     }
   }
 
-  
   const tabList = dialog.locator(SELECTORS.tabList).first();
   if (!(await visible(tabList))) {
-    logger.warn("openMediaTab: tab list not visible inside dialog", { tabIndex });
+    logger.warn("openMediaTab: tab list not visible inside dialog", {
+      tabIndex,
+    });
     return null;
   }
 
   const tab = tabList.locator(SELECTORS.mediaTabButton).nth(tabIndex);
+
   if (!(await visible(tab))) {
     logger.warn("openMediaTab: target tab button not visible", { tabIndex });
     return null;
   }
 
   try {
-    await tab.click();
+    await tab.click({ force: true, timeout: 5000 });
   } catch (err) {
-    logger.warn("openMediaTab: tab click failed", {
-      tabIndex,
-      error: (err as Error).message,
-    });
-    return null;
+    logger.warn(
+      "openMediaTab: tab click failed with force: true. Trying dispatchEvent.",
+      { tabIndex },
+    );
+
+    try {
+      await tab.dispatchEvent("click");
+    } catch (dispatchErr) {
+      logger.warn("openMediaTab: dispatchEvent click also failed", {
+        tabIndex,
+        error: (dispatchErr as Error).message,
+      });
+      return null;
+    }
   }
 
-  
-  
-  
-  const panelReady = dialog.locator(
-    [
-      SELECTORS.stickerSearchInput,
-      SELECTORS.gifSearchInput,
-      SELECTORS.musicSearchInput,
-      SELECTORS.mediaItemButton,
-    ].join(", "),
-  ).first();
+  await sleep(300);
+
+  const panelReady = dialog
+    .locator(
+      [
+        SELECTORS.stickerSearchInput,
+        SELECTORS.gifSearchInput,
+        SELECTORS.musicSearchInput,
+        SELECTORS.mediaItemButton,
+      ].join(", "),
+    )
+    .first();
 
   if (!(await visible(panelReady))) {
     logger.warn("openMediaTab: tab panel content never appeared", { tabIndex });
@@ -702,7 +721,9 @@ async function searchAndSelectMedia(
   const searchInput = mediaDialog.locator(searchInputSelector).first();
 
   if (!(await visible(searchInput))) {
-    logger.warn("searchAndSelectMedia: search input not visible", { searchInputSelector });
+    logger.warn("searchAndSelectMedia: search input not visible", {
+      searchInputSelector,
+    });
     return false;
   }
 
@@ -710,9 +731,8 @@ async function searchAndSelectMedia(
 
   const items = mediaDialog.locator(SELECTORS.mediaItemButton);
 
-  await sleep(200)
+  await sleep(200);
 
-  
   if (!(await visible(items.first()))) {
     logger.warn("searchAndSelectMedia: no results appeared", { title });
     return false;
@@ -739,11 +759,10 @@ export async function sendText(
     const conversation = getConversationById(chatId);
     const trimmedText = text.trim();
     const shouldAppendBotTag = options.appendBotTag ?? true;
-    const outgoingText =
-      !shouldAppendBotTag
-        ? trimmedText
-        : conversation?.isGroup === true ||
-            trimmedText.toUpperCase().endsWith("@BOT")
+    const outgoingText = !shouldAppendBotTag
+      ? trimmedText
+      : conversation?.isGroup === true ||
+          trimmedText.toUpperCase().endsWith("@BOT")
         ? text
         : trimmedText.length
           ? `${trimmedText} @BOT`
@@ -859,7 +878,6 @@ export async function sendStickerOrGIF(
     const replyReady = await selectToReply(chatId, targetMid);
     if (targetMid && !replyReady) return false;
 
-    
     const mediaDialog = await openMediaTab(page, 0);
     if (!mediaDialog) return false;
 
@@ -875,7 +893,6 @@ export async function sendStickerOrGIF(
       return true;
     }
 
-    
     const tabList = mediaDialog.locator(SELECTORS.tabList).first();
     const gifTab = tabList.locator(SELECTORS.mediaTabButton).nth(1);
 
@@ -893,7 +910,6 @@ export async function sendStickerOrGIF(
       return false;
     }
 
-    
     const gifInput = mediaDialog.locator(SELECTORS.gifSearchInput).first();
     if (!(await visible(gifInput))) {
       logger.warn("sendStickerOrGIF: GIF tab panel did not render");
