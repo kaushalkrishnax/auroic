@@ -3,8 +3,7 @@
  * Message targeting uses index-based DOM matching instead of text search.
  */
 
-import fs from "fs";
-import type { Locator, Page } from "playwright";
+import type { Locator, Page } from "playwright-core";
 import { find } from "node-emoji";
 import { parseBuffer } from "music-metadata";
 import { getPage } from "@/automation/session.js";
@@ -35,9 +34,9 @@ export interface DomMessageSnapshot {
 /* Helper utilities                                  */
 /* ------------------------------------------------ */
 
-async function visible(locator: Locator, timeout = 2500): Promise<boolean> {
+async function visible(locator: Locator): Promise<boolean> {
   try {
-    await locator.waitFor({ state: "visible", timeout });
+    await locator.waitFor({ state: "visible" });
     return (await locator.count()) > 0;
   } catch {
     return false;
@@ -45,7 +44,7 @@ async function visible(locator: Locator, timeout = 2500): Promise<boolean> {
 }
 
 async function click(locator: Locator): Promise<boolean> {
-  if (!(await visible(locator, 2000))) return false;
+  if (!(await visible(locator))) return false;
   try {
     await locator.click({ timeout: 2500 });
     return true;
@@ -55,7 +54,7 @@ async function click(locator: Locator): Promise<boolean> {
 }
 
 async function hover(locator: Locator): Promise<boolean> {
-  if (!(await visible(locator, 2000))) return false;
+  if (!(await visible(locator))) return false;
   try {
     await locator.hover({ timeout: 2500 });
     return true;
@@ -110,11 +109,11 @@ async function findMessageContainer(
         domGroups.unshift(group);
       }
     } catch {
-      // Group detached while iterating; skip and continue.
+      
     }
   }
 
-  // If visibility probing couldn't collect enough rows, fall back to raw tail.
+  
   if (domGroups.length < take) {
     domGroups.length = 0;
     for (let i = groupCount - take; i < groupCount; i++) {
@@ -168,7 +167,6 @@ export async function attachDataMidToDOM(
       const container = await findMessageContainer(chatId, targetMid);
       if (container) {
         await setDataMidOnContainer(container, targetMid);
-        logger.info("Attached data-mid to DOM message", { chatId, targetMid, attempt: i + 1 });
         return true;
       }
     } catch (err) {
@@ -478,7 +476,7 @@ async function resolveTargetContainer(
     return null;
   }
 
-  // Try one recovery scroll before giving up.
+  
   const page = getPage();
   const messageList = page.locator(SELECTORS.messageList).first();
   try {
@@ -575,6 +573,161 @@ export async function selectToReply(
   }
 }
 
+/* ------------------------------------------------ */
+/* Media dialog                                      */
+/* ------------------------------------------------ */
+
+/**
+ * Sanitizes media search query by stripping type keywords.
+ */
+function sanitizeMediaTitle(title: string): string {
+  return title
+    .replace(/\b(media|meme|gif|sticker)\b/gi, "")
+    .replace(/media:/gi, "")
+    .replace(/_/g, " ")
+    .trim();
+}
+
+/**
+ * Opens the media dialog and navigates to the requested tab index.
+ * Returns the dialog Locator on success, null on any failure.
+ */
+async function openMediaTab(page: Page, tabIndex: number): Promise<Locator | null> {
+  
+  const input = page.locator(SELECTORS.messageInput).first();
+  if (!(await visible(input))) {
+    logger.warn("openMediaTab: message input not visible — composer not ready");
+    return null;
+  }
+
+  
+  let dialog = page.locator(SELECTORS.dialog).last();
+  const alreadyOpen = await dialog.isVisible().catch(() => false);
+
+  if (!alreadyOpen) {
+    const btn = page.locator(SELECTORS.mediaButton).first();
+    if (!(await visible(btn))) {
+      logger.warn("openMediaTab: media button not visible");
+      return null;
+    }
+
+    try {
+      await btn.click();
+    } catch (err) {
+      logger.warn("openMediaTab: media button click failed", {
+        error: (err as Error).message,
+      });
+      return null;
+    }
+
+    
+    dialog = page.locator(SELECTORS.dialog).last();
+    if (!(await visible(dialog))) {
+      logger.warn("openMediaTab: dialog did not appear after media button click");
+      return null;
+    }
+  }
+
+  
+  const tabList = dialog.locator(SELECTORS.tabList).first();
+  if (!(await visible(tabList))) {
+    logger.warn("openMediaTab: tab list not visible inside dialog", { tabIndex });
+    return null;
+  }
+
+  const tab = tabList.locator(SELECTORS.mediaTabButton).nth(tabIndex);
+  if (!(await visible(tab))) {
+    logger.warn("openMediaTab: target tab button not visible", { tabIndex });
+    return null;
+  }
+
+  try {
+    await tab.click();
+  } catch (err) {
+    logger.warn("openMediaTab: tab click failed", {
+      tabIndex,
+      error: (err as Error).message,
+    });
+    return null;
+  }
+
+  
+  
+  
+  const panelReady = dialog.locator(
+    [
+      SELECTORS.stickerSearchInput,
+      SELECTORS.gifSearchInput,
+      SELECTORS.musicSearchInput,
+      SELECTORS.mediaItemButton,
+    ].join(", "),
+  ).first();
+
+  if (!(await visible(panelReady))) {
+    logger.warn("openMediaTab: tab panel content never appeared", { tabIndex });
+    return null;
+  }
+
+  logger.info("openMediaTab: ready", { tabIndex });
+  return dialog;
+}
+
+async function closeMediaByFocusingComposer(page: Page): Promise<void> {
+  const input = page.locator(SELECTORS.messageInput).first();
+
+  if (!(await visible(input))) {
+    logger.warn("Cannot close media tab via message input: input not visible");
+    return;
+  }
+
+  try {
+    await input.click({ timeout: 2000 });
+  } catch (err) {
+    logger.warn("Failed to close media tab via message input", {
+      error: (err as Error).message,
+    });
+  }
+}
+
+/**
+ * Types into the search input, waits for results, then clicks a random item
+ * from the first `maxRandomIndex` results (0 = any).
+ */
+async function searchAndSelectMedia(
+  mediaDialog: Locator,
+  searchInputSelector: string,
+  title: string,
+  maxRandomIndex: number,
+): Promise<boolean> {
+  const searchInput = mediaDialog.locator(searchInputSelector).first();
+
+  if (!(await visible(searchInput))) {
+    logger.warn("searchAndSelectMedia: search input not visible", { searchInputSelector });
+    return false;
+  }
+
+  await searchInput.fill(sanitizeMediaTitle(title));
+
+  const items = mediaDialog.locator(SELECTORS.mediaItemButton);
+
+  await sleep(200)
+
+  
+  if (!(await visible(items.first()))) {
+    logger.warn("searchAndSelectMedia: no results appeared", { title });
+    return false;
+  }
+
+  const count = await items.count();
+  const cap = maxRandomIndex > 0 ? Math.min(maxRandomIndex, count) : count;
+
+  for (let i = 0; i < cap; i++) {
+    if (await click(items.nth(i))) return true;
+  }
+
+  return false;
+}
+
 export async function sendText(
   text: string,
   chatId: string,
@@ -619,8 +772,7 @@ export async function sendText(
     logger.info("Text message sent", {
       length: outgoingText.length,
       reply: !!targetMid,
-      botTagAttached:
-        shouldAppendBotTag && conversation?.isGroup !== true,
+      botTagAttached: shouldAppendBotTag && conversation?.isGroup !== true,
     });
     return true;
   } catch (err) {
@@ -629,97 +781,6 @@ export async function sendText(
     });
     return false;
   }
-}
-
-/**
- * Opens media dialog and switches to the specified tab
- */
-async function openMediaTab(
-  page: Page,
-  tabIndex: number,
-): Promise<Locator | null> {
-  const mediaButton = page.locator(SELECTORS.mediaButton).first();
-
-  if (!(await click(mediaButton))) {
-    logger.warn("Media button not found");
-    return null;
-  }
-
-  const mediaDialog = page.locator(SELECTORS.dialog).first();
-  const mediaTabList = mediaDialog.locator(SELECTORS.tabList).first();
-  const tab = mediaTabList.locator(SELECTORS.mediaTabButton).nth(tabIndex);
-
-  if (!(await click(tab))) {
-    logger.warn(`Media tab ${tabIndex} not found`);
-    return null;
-  }
-
-  return mediaDialog;
-}
-
-async function closeMediaByFocusingComposer(page: Page): Promise<void> {
-  const input = page.locator(SELECTORS.messageInput).first();
-
-  if (!(await visible(input, 2000))) {
-    logger.warn("Cannot close media tab via message input: input not visible");
-    return;
-  }
-
-  try {
-    await input.click({ timeout: 2000 });
-  } catch (err) {
-    logger.warn("Failed to close media tab via message input", {
-      error: (err as Error).message,
-    });
-  }
-}
-
-/**
- * Sanitizes media search query
- */
-function sanitizeMediaTitle(title: string): string {
-  return title
-    .replace("media", "")
-    .replace("meme", "")
-    .replace("gif", "")
-    .replace("sticker", "")
-    .replace("media:", "")
-    .replace("_", " ")
-    .trim();
-}
-
-/**
- * Searches and selects a random media item
- */
-async function searchAndSelectMedia(
-  mediaDialog: Locator,
-  searchInputSelector: string,
-  title: string,
-  maxRandomIndex: number,
-): Promise<boolean> {
-  const searchInput = mediaDialog.locator(searchInputSelector).first();
-
-  if (!(await visible(searchInput))) {
-    logger.warn(`Search input not found: ${searchInputSelector}`);
-    return false;
-  }
-
-  await searchInput.fill(sanitizeMediaTitle(title));
-  const items = mediaDialog.locator(SELECTORS.mediaItemButton);
-  try {
-    await items.first().waitFor({ state: "visible", timeout: 3500 });
-  } catch {
-    return false;
-  }
-
-  const count = await items.count();
-  const cap = maxRandomIndex > 0 ? Math.min(maxRandomIndex, count) : count;
-
-  for (let i = 0; i < cap; i++) {
-    if (await click(items.nth(i))) return true;
-  }
-
-  return false;
 }
 
 export async function sendSticker(
@@ -745,14 +806,12 @@ export async function sendSticker(
     if (success) {
       logger.info("Sticker sent", { title, reply: !!targetMid });
       return true;
-    } else {
-      logger.warn("No sticker results found for title", { title });
-      return false;
     }
+
+    logger.warn("No sticker results found for title", { title });
+    return false;
   } catch (err) {
-    logger.warn("Send Sticker failed", {
-      error: (err as Error).message,
-    });
+    logger.warn("Send Sticker failed", { error: (err as Error).message });
     return false;
   }
 }
@@ -780,14 +839,12 @@ export async function sendGIF(
     if (success) {
       logger.info("GIF sent", { title, reply: !!targetMid });
       return true;
-    } else {
-      logger.warn("No GIF results found for title", { title });
-      return false;
     }
+
+    logger.warn("No GIF results found for title", { title });
+    return false;
   } catch (err) {
-    logger.warn("Send GIF failed", {
-      error: (err as Error).message,
-    });
+    logger.warn("Send GIF failed", { error: (err as Error).message });
     return false;
   }
 }
@@ -802,45 +859,61 @@ export async function sendStickerOrGIF(
     const replyReady = await selectToReply(chatId, targetMid);
     if (targetMid && !replyReady) return false;
 
-    // Try sticker first
-    let mediaDialog = await openMediaTab(page, 0);
+    
+    const mediaDialog = await openMediaTab(page, 0);
     if (!mediaDialog) return false;
 
-    let success = await searchAndSelectMedia(
+    const stickerHit = await searchAndSelectMedia(
       mediaDialog,
       SELECTORS.stickerSearchInput,
       title,
       4,
     );
 
-    if (success) {
+    if (stickerHit) {
       logger.info("Sticker sent", { title, reply: !!targetMid });
       return true;
     }
 
-    // Fallback to GIF by switching tab in the already open media dialog.
-    const mediaTabList = mediaDialog.locator(SELECTORS.tabList).first();
-    const gifTab = mediaTabList.locator(SELECTORS.mediaTabButton).nth(1);
+    
+    const tabList = mediaDialog.locator(SELECTORS.tabList).first();
+    const gifTab = tabList.locator(SELECTORS.mediaTabButton).nth(1);
 
-    if (!(await click(gifTab))) {
-      logger.warn("Media tab 1 not found");
+    if (!(await visible(gifTab))) {
+      logger.warn("sendStickerOrGIF: GIF tab not visible");
       return false;
     }
 
-    success = await searchAndSelectMedia(
+    try {
+      await gifTab.click();
+    } catch (err) {
+      logger.warn("sendStickerOrGIF: GIF tab click failed", {
+        error: (err as Error).message,
+      });
+      return false;
+    }
+
+    
+    const gifInput = mediaDialog.locator(SELECTORS.gifSearchInput).first();
+    if (!(await visible(gifInput))) {
+      logger.warn("sendStickerOrGIF: GIF tab panel did not render");
+      return false;
+    }
+
+    const gifHit = await searchAndSelectMedia(
       mediaDialog,
       SELECTORS.gifSearchInput,
       title,
       6,
     );
 
-    if (success) {
+    if (gifHit) {
       logger.info("GIF sent (fallback)", { title, reply: !!targetMid });
       return true;
-    } else {
-      logger.warn("No sticker or GIF results found", { title });
-      return false;
     }
+
+    logger.warn("No sticker or GIF results found", { title });
+    return false;
   } catch (err) {
     logger.warn("sendStickerOrGIF failed", { error: (err as Error).message });
     return false;
@@ -851,37 +924,34 @@ export async function playMusic(query: string): Promise<boolean> {
   try {
     const page = getPage();
 
-    let mediaDialog = await openMediaTab(page, 2);
+    const mediaDialog = await openMediaTab(page, 2);
     if (!mediaDialog) return false;
 
-    let success = await searchAndSelectMedia(
+    logger.info("Opened music tab, searching for track…", { query });
+
+    const found = await searchAndSelectMedia(
       mediaDialog,
       SELECTORS.musicSearchInput,
       query,
       0,
     );
 
-    if (success) {
-      const musicSendBtn = mediaDialog
-        .locator(SELECTORS.musicSendButton)
-        .first();
-
-      if (!(await click(musicSendBtn))) {
-        logger.warn("Music send button not found");
-        return false;
-      }
-    } else {
+    if (!found) {
       await closeMediaByFocusingComposer(page);
       logger.warn("No music results found for query", { query });
+      return false;
+    }
+
+    const musicSendBtn = mediaDialog.locator(SELECTORS.musicSendButton).first();
+    if (!(await click(musicSendBtn))) {
+      logger.warn("Music send button not found");
       return false;
     }
 
     logger.info("Music track played", { query });
     return true;
   } catch (err) {
-    logger.warn("Play music failed", {
-      error: (err as Error).message,
-    });
+    logger.warn("Play music failed", { error: (err as Error).message });
     return false;
   }
 }
@@ -929,9 +999,7 @@ export async function sendVoiceNote(
     logger.info("Voice note sent", { text, reply: !!targetMid });
     return true;
   } catch (err) {
-    logger.warn("Send voice note failed", {
-      error: (err as Error).message,
-    });
+    logger.warn("Send voice note failed", { error: (err as Error).message });
     return false;
   }
 }

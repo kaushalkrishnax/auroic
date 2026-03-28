@@ -213,16 +213,10 @@ function trackPassiveMessage(chatId: string, mid: string): void {
 
   // Count trigger
   if (state.unprocessedMids.size >= passive.messageCount) {
-    // Clear the time trigger — count trigger takes priority.
     if (state.passiveFlushTimer) {
       clearTimeout(state.passiveFlushTimer);
       state.passiveFlushTimer = null;
     }
-
-    logger.info("Passive: count threshold reached — flushing", {
-      chatId,
-      unprocessedCount: state.unprocessedMids.size,
-    });
 
     void processPassiveBatch(chatId);
     return;
@@ -241,12 +235,7 @@ function trackPassiveMessage(chatId: string, mid: string): void {
       state.passiveFlushTimer = null;
 
       if (state.unprocessedMids.size === 0) return;
-
-      logger.info("Passive: time threshold reached — flushing", {
-        chatId,
-        unprocessedCount: state.unprocessedMids.size,
-      });
-
+      
       void processPassiveBatch(chatId);
     }, delayMs);
   }

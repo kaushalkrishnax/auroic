@@ -44,41 +44,22 @@ async function ensureThreadListVisible(): Promise<void> {
   await threadList.waitFor({ state: "visible", timeout: 8000 });
 }
 
-async function clickChatFromThreadListByTitle(
-  chatId: string,
-  title: string,
-): Promise<void> {
+export async function clickChatByTitle(title: string) {
+  const p = getPage();
+
   await ensureThreadListVisible();
 
-  const page = getPage();
-  const threadList = page
-    .locator(`${SELECTORS.threadList}, nav[role=\"navigation\"], [aria-label*=\"Thread\"]`)
-    .first();
-  const links = threadList.locator('a[href*="/direct/t/"]');
-  const titleRegex = buildTitleRegex(title);
-  const targetUrlPattern = new RegExp(`/direct/t/${chatId}(?:[/?#]|$)`);
+  const target = p.locator(
+    `${SELECTORS.threadList} span[title="${title}"]`
+  ).first();
 
-  const count = await links.count();
-  if (count === 0) {
-    throw new Error("No thread links available in inbox thread list");
-  }
+  if (!(await target.count())) return false;
 
-  for (let i = 0; i < count; i++) {
-    const link = links.nth(i);
-    const rawText = (await link.innerText().catch(() => "")) || "";
-    const normalizedCandidate = normalizeTitle(rawText);
+  const item = target.locator('xpath=ancestor::div[@role="button"]').first();
 
-    if (!normalizedCandidate || !titleRegex.test(normalizedCandidate)) {
-      continue;
-    }
-
-    await link.click({ timeout: 3500 });
-    await page.waitForURL(targetUrlPattern, { timeout: 6000 });
-    return;
-  }
-
-  throw new Error(`Chat not found in thread list by title regex: ${title}`);
-}
+  await item.click().catch(() => {});
+  return true;
+} 
 
 async function navigateViaGoto(chatId: string): Promise<void> {
   const page = getPage();
@@ -109,12 +90,15 @@ export async function navigateToChat(chatId: string): Promise<void> {
   const chat = await getConversationById(chatId);
   const chatTitle = chat?.title || "";
 
+  console.log("Attempting to navigate to chat", { chatId, title: chatTitle });
+
   try {
     if (!chatTitle) {
       throw new Error("Missing conversation title for click navigation");
     }
 
-    await clickChatFromThreadListByTitle(chatId, chatTitle);
+    await clickChatByTitle(chatTitle);
+    console.log("Clicked chat in thread list, waiting for input to appear…", { chatId, title: chatTitle });
     await input.waitFor({ state: "visible", timeout: 8000 });
     logger.info("Chat loaded via thread list click", { chatId, title: chatTitle });
     return;

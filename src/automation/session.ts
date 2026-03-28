@@ -1,384 +1,207 @@
-/**
- * Browser session manager.
- * Single Playwright persistent context, single page for the active chat.
- */
-
 import fs from "fs";
-import { chromium } from "playwright";
-import type { BrowserContext, Page } from "playwright";
-import logger from "@/utils/logger.js";
+import { chromium } from "playwright-core";
+import type { BrowserContext, Page } from "playwright-core";
 import getConfig from "@/runtime/index.js";
 import { attachDataMidsForRecentWindow } from "@/automation/chat.js";
 import { getStartupConversationIds } from "@/db/queries/conversations.js";
 import SELECTORS from "@/instagram/selectors.js";
-import {
-  initMailbox,
-  initThread,
-  parseWebsocketFrame,
-} from "@/instagram/parsers.js";
+import { initMailbox, initThread, parseWebsocketFrame } from "@/instagram/parsers.js";
 
-let _context: BrowserContext | null = null;
-let _sessionPage: Page | null = null;
-let _sessionInitialized = false;
-let _dialogPollInterval: ReturnType<typeof setInterval> | null = null;
-let _mailboxInitialized = false;
-let _mailboxInitPromise: Promise<void> = Promise.resolve();
-let _resolveMailboxInit: (() => void) | null = null;
+let context: BrowserContext | null = null;
+let page: Page | null = null;
+let polling: NodeJS.Timeout | null = null;
 
-function clearDialogPolling(): void {
-  if (!_dialogPollInterval) return;
-  clearInterval(_dialogPollInterval);
-  _dialogPollInterval = null;
-}
+let mailboxReady = false;
+let mailboxResolve: (() => void) | null = null;
+let mailboxPromise = new Promise<void>((r) => (mailboxResolve = r));
 
-function startDialogPolling(page: Page): void {
-  clearDialogPolling();
-  _dialogPollInterval = setInterval(() => {
-    handleDialogs(page).catch((err) => {
-      logger.debug("Dialog polling step failed", {
-        error: err instanceof Error ? err.message : err,
-      });
-    });
-  }, 2000);
-}
+const resetMailbox = () => {
+  mailboxReady = false;
+  mailboxPromise = new Promise<void>((r) => (mailboxResolve = r));
+};
 
-function extractChatIdFromUrl(url: string): string | null {
-  const match = url.match(/\/direct\/t\/([^/?#]+)/);
-  return match?.[1] ?? null;
-}
+const markMailbox = () => {
+  if (mailboxReady) return;
+  mailboxReady = true;
+  mailboxResolve?.();
+  mailboxResolve = null;
+};
 
-function resetMailboxInitState(): void {
-  _mailboxInitialized = false;
-  _mailboxInitPromise = new Promise<void>((resolve) => {
-    _resolveMailboxInit = resolve;
-  });
-}
+const waitMailbox = (t = 45000) =>
+  mailboxReady
+    ? Promise.resolve()
+    : Promise.race([
+        mailboxPromise,
+        new Promise((_, rej) => setTimeout(() => rej(new Error("Mailbox timeout")), t)),
+      ]);
 
-function markMailboxInitialized(): void {
-  if (_mailboxInitialized) return;
-  _mailboxInitialized = true;
-  if (_resolveMailboxInit) {
-    _resolveMailboxInit();
-    _resolveMailboxInit = null;
-  }
-}
+const startPolling = (p: Page) => {
+  if (polling) clearInterval(polling);
+  polling = setInterval(() => handleDialogs(p).catch(() => {}), 2000);
+};
 
-async function waitForMailboxInitialization(timeoutMs = 45000): Promise<void> {
-  if (_mailboxInitialized) return;
+const stopPolling = () => {
+  if (!polling) return;
+  clearInterval(polling);
+  polling = null;
+};
 
-  await Promise.race([
-    _mailboxInitPromise,
-    new Promise<void>((_, reject) => {
-      setTimeout(() => {
-        reject(new Error("Mailbox metadata initialization timed out"));
-      }, timeoutMs);
-    }),
-  ]);
-}
+export async function connectBrowser() {
+  if (context) return { context };
 
-function getStartupCandidates(configuredChatIds: string[]): string[] {
-  return getStartupConversationIds(configuredChatIds);
-}
+  const cfg = getConfig();
+  fs.mkdirSync(cfg.chromium.profileDir, { recursive: true });
 
-async function openChatById(page: Page, chatId: string): Promise<boolean> {
-  await page.goto(`https://www.instagram.com/direct/t/${chatId}/`, {
-    waitUntil: "domcontentloaded"
-  });
-
-  await page.waitForURL(new RegExp(`/direct/t/${chatId}(?:[/?#]|$)`))
-
-  await page.waitForSelector(SELECTORS.messageInput);
-  return true;
-}
-
-/* ------------------------------------------------ */
-/* Browser connect                                   */
-/* ------------------------------------------------ */
-
-export async function connectBrowser(): Promise<{ context: BrowserContext }> {
-  if (_context) return { context: _context };
-
-  const config = getConfig();
-  const profileDir = config.chromium.profileDir;
-
-  fs.mkdirSync(profileDir, { recursive: true });
-
-  logger.info("Launching headless Chromium…", { profileDir });
-
-  const context = await chromium.launchPersistentContext(profileDir, {
-    headless: true,
+  context = await chromium.launchPersistentContext(cfg.chromium.profileDir, {
+    headless: false,
     args: [
       "--no-sandbox",
-      "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
       "--disable-gpu",
-      "--disable-background-timer-throttling",
-      "--disable-renderer-backgrounding",
       "--disable-sync",
       "--no-first-run",
-      "--disable-default-apps",
-      "--disable-component-update",
-      "--blink-settings=imagesEnabled=false",
-      "--use-fake-ui-for-media-stream",
-      "--allow-file-access-from-files",
       "--disable-extensions",
       "--mute-audio",
+      "--blink-settings=imagesEnabled=false",
     ],
     permissions: ["microphone"],
   });
 
   context.on("close", () => {
-    logger.warn("Browser context closed");
-    clearDialogPolling();
-    _sessionPage = null;
-    _sessionInitialized = false;
-    _context = null;
+    stopPolling();
+    page = null;
+    context = null;
   });
-
-  _context = context;
-
-  logger.info("Chromium launched");
 
   return { context };
 }
 
-/* ------------------------------------------------ */
-/* Page listeners                                    */
-/* ------------------------------------------------ */
+const attach = (p: Page) => {
+  p.removeAllListeners();
 
-function attachPageListeners(page: Page): void {
-  page.removeAllListeners();
-
-  page.on("crash", () => {
-    logger.error("Page crashed — resetting session");
-    clearDialogPolling();
-    _sessionPage = null;
-    _sessionInitialized = false;
+  p.on("close", () => {
+    stopPolling();
+    page = null;
   });
 
-  page.on("close", () => {
-    logger.warn("Page closed — resetting session");
-    clearDialogPolling();
-    _sessionPage = null;
-    _sessionInitialized = false;
+  p.on("crash", () => {
+    stopPolling();
+    page = null;
   });
 
-  /* GraphQL interceptor */
-
-  page.on("response", async (response) => {
+  p.on("response", async (res) => {
     try {
       if (
-        !response.url().includes("/api/graphql") ||
-        response.status() !== 200 ||
-        response.request().method() !== "POST"
+        !res.url().includes("/api/graphql") ||
+        res.status() !== 200 ||
+        res.request().method() !== "POST"
       )
         return;
 
-      const postData = response.request().postData();
-      if (!postData) return;
+      const body = res.request().postData();
+      if (!body) return;
 
-      if (postData.includes("PolarisDirectInboxQuery")) {
-        const data = await response.json();
-        initMailbox(data);
-        markMailboxInitialized();
+      if (body.includes("PolarisDirectInboxQuery")) {
+        initMailbox(await res.json());
+        markMailbox();
         return;
       }
 
-      if (postData.includes("IGDThreadDetailMainViewContainerQuery")) {
-        const data = await response.json();
-        const chatId = initThread(data);
-        if (chatId) {
-          await attachDataMidsForRecentWindow(chatId, 8);
-        }
-        return;
+      if (body.includes("IGDThreadDetailMainViewContainerQuery")) {
+        const chatId = initThread(await res.json());
+        if (chatId) await attachDataMidsForRecentWindow(chatId, 8);
       }
-    } catch (err) {
-      logger.warn("Failed to parse GraphQL response", {
-        error: err instanceof Error ? err.message : err,
-      });
-    }
+    } catch {}
   });
 
-  /* WebSocket interceptor */
-
-  page.on("websocket", (ws) => {
-    ws.on("framereceived", async (frame) => {
+  p.on("websocket", (ws) => {
+    ws.on("framereceived", (f) => {
       try {
-        const payload = frame.payload.toString("utf8");
-
+        const payload = f.payload.toString("utf8");
         if (!payload.includes("/ig_message_sync")) return;
-
-        const cfg = getConfig();
-
-        parseWebsocketFrame(payload, cfg.instagram.chatIds);
-      } catch (err) {
-        logger.error("WebSocket frame processing failed", {
-          error: err instanceof Error ? err.message : err,
-        });
-      }
+        parseWebsocketFrame(payload, getConfig().instagram.chatIds);
+      } catch {}
     });
   });
-}
+};
 
-/* ------------------------------------------------ */
-/* Session helpers                                   */
-/* ------------------------------------------------ */
+export const getPage = () => {
+  if (!page || page.isClosed()) throw new Error("No session");
+  return page;
+};
 
-export function getPage(): Page {
-  if (!_sessionPage || _sessionPage.isClosed()) {
-    throw new Error(
-      "No active browser session — call initInstagramSession() first",
-    );
-  }
+export const ensureSession = async () => {
+  if (!page || page.isClosed()) await initInstagramSession();
+  return page!;
+};
 
-  return _sessionPage;
-}
-
-export async function ensureSession(): Promise<Page> {
-  if (!_sessionPage || _sessionPage.isClosed()) {
-    await initInstagramSession();
-  }
-
-  return _sessionPage!;
-}
-
-export async function handleDialogs(page: Page): Promise<void> {
-  const buttons = [
-    { name: "continue", selector: SELECTORS.continueButton },
-    { name: "save info", selector: SELECTORS.saveInfoButton },
-    { name: "not now", selector: SELECTORS.notNowButton },
-  ];
-
-  for (const btn of buttons) {
-    const locator = page.locator(btn.selector).first();
-
-    if (await locator.isVisible().catch(() => false)) {
-      try {
-        await locator.click({ timeout: 1000 });
-        logger.info(`Closed dialog: ${btn.name}`);
-        return;
-      } catch (err) {
-        logger.warn(`Failed to click dialog button: ${btn.name}`);
-      }
+export const handleDialogs = async (p: Page) => {
+  for (const sel of [
+    SELECTORS.continueButton,
+    SELECTORS.saveInfoButton,
+    SELECTORS.notNowButton,
+  ]) {
+    const el = p.locator(sel).first();
+    if (await el.isVisible().catch(() => false)) {
+      await el.click().catch(() => {});
+      return;
     }
   }
+};
+
+const openChat = async (p: Page, id: string) => {
+  await p.goto(`https://www.instagram.com/direct/t/${id}/`, { waitUntil: "domcontentloaded" });
+  await p.waitForURL(new RegExp(`/direct/t/${id}`));
+  await p.waitForSelector(SELECTORS.messageInput);
+};
+
+export async function initInstagramSession() {
+  if (page && !page.isClosed()) return;
+
+  const { context: ctx } = await connectBrowser();
+  const cfg = getConfig();
+
+  const p = ctx.pages()[0] ?? (await ctx.newPage());
+  page = p;
+
+  resetMailbox();
+  attach(p);
+
+  let ids = getStartupConversationIds(cfg.instagram.chatIds);
+
+  if (ids.length) {
+    await openChat(p, ids[0]).catch(() => {});
+  } else {
+    await p.goto("https://www.instagram.com/direct/inbox/");
+  }
+
+  if (p.url().includes("/accounts/login")) {
+    await p.waitForSelector(SELECTORS.emailInput);
+    await p.fill(SELECTORS.emailInput, cfg.instagram.username);
+    await p.fill(SELECTORS.passwordInput, cfg.instagram.password);
+    await p.click(SELECTORS.submitButton);
+    await p.waitForURL(/\/direct\//).catch(() => {});
+  }
+
+  if (!p.url().includes("/direct/")) {
+    await p.goto("https://www.instagram.com/direct/inbox/");
+  }
+
+  startPolling(p);
+
+  if (!ids.length) {
+    await waitMailbox();
+    ids = getStartupConversationIds(cfg.instagram.chatIds);
+
+    if (!ids.length) throw new Error("No chat");
+
+    await openChat(p, ids[0]);
+  }
 }
 
-/* ------------------------------------------------ */
-/* Session init                                      */
-/* ------------------------------------------------ */
-
-export async function initInstagramSession(): Promise<void> {
-  if (_sessionInitialized && _sessionPage && !_sessionPage.isClosed()) return;
-
-  const { context } = await connectBrowser();
-
-  const config = getConfig();
-  const chatUrl = "https://www.instagram.com/direct/inbox/";
-
-  logger.info("Opening Instagram session…", {
-    configuredChatId: config.instagram.chatIds[0] ?? null,
-    startupMode: "db-first-most-recent",
-  });
-
-  const pages = context.pages();
-  const page = pages.length ? pages[0] : await context.newPage();
-
-  resetMailboxInitState();
-
-  /* Attach listeners BEFORE navigation */
-  attachPageListeners(page);
-
-  await page.goto(chatUrl);
-
-  if (page.url().includes("/accounts/login")) {
-    await performLogin(page);
-    await page
-      .waitForURL(/\/direct\/(?:inbox|t\/[^/?#]+)(?:[/?#]|$)/)
-      .catch(() => undefined);
-  }
-
-  if (!page.url().includes("/direct/")) {
-    await page.goto("https://www.instagram.com/direct/inbox/", {
-      waitUntil: "domcontentloaded"
-    });
-  }
-
-  await page
-    .waitForURL(/\/direct\/(?:inbox|t\/[^/?#]+)(?:[/?#]|$)/)
-    .catch(() => undefined);
-
-  startDialogPolling(page);
-
-  let startupCandidates = getStartupCandidates(config.instagram.chatIds);
-  let startupChatId: string | null = null;
-
-  if (!startupChatId && startupCandidates.length === 0) {
-    await page.goto(chatUrl, {
-      waitUntil: "domcontentloaded"
-    });
-    await waitForMailboxInitialization();
-    startupCandidates = getStartupCandidates(config.instagram.chatIds);
-  }
-
-  if (!startupChatId && startupCandidates.length > 0) {
-    const primaryChatId = startupCandidates[0];
-    await openChatById(page, primaryChatId);
-    startupChatId = primaryChatId;
-  }
-
-  if (!startupChatId) {
-    throw new Error("No startup chat available after mailbox initialization");
-  }
-
-  logger.info("Instagram session ready", {
-    startupChatId,
-    configuredChatId: config.instagram.chatIds[0] ?? null,
-  });
-
-  _sessionPage = page;
-  _sessionInitialized = true;
-}
-
-/* ------------------------------------------------ */
-/* Login                                             */
-/* ------------------------------------------------ */
-
-async function performLogin(page: Page): Promise<void> {
-  const config = getConfig();
-
-  logger.info("Logging in to Instagram…");
-
-  await page.waitForSelector(SELECTORS.emailInput);
-
-  await page.fill(SELECTORS.emailInput, config.instagram.username);
-  await page.fill(SELECTORS.passwordInput, config.instagram.password);
-
-  await page.click(SELECTORS.submitButton);
-
-  logger.info("Login submitted");
-}
-
-/* ------------------------------------------------ */
-/* Disconnect                                        */
-/* ------------------------------------------------ */
-
-export async function disconnectBrowser(): Promise<void> {
-  clearDialogPolling();
-
-  if (_context) {
-    try {
-      await _context.close();
-    } catch (err) {
-      logger.warn("Failed to close browser context", {
-        error: err instanceof Error ? err.message : err,
-      });
-    }
-  }
-
-  _sessionPage = null;
-  _sessionInitialized = false;
-  _context = null;
-
-  logger.info("Browser disconnected");
+export async function disconnectBrowser() {
+  stopPolling();
+  await context?.close().catch(() => {});
+  context = null;
+  page = null;
 }

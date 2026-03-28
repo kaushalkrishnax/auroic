@@ -1,24 +1,9 @@
-/**
- * Main orchestrator — Auroic Message Router Agent
- *
- * Boot sequence:
- *   1. Init DB (Drizzle + SQLite)
- *   2. Launch browser and init Instagram session
- *
- * Event-driven:
- *   - Listens for NEW_MESSAGE / EDIT events from the WebSocket parser
- *   - Dispatches each to the processing pipeline
- */
-
 import getConfig, { initRuntimeConfig } from "@/runtime/index.js";
 import { startServer } from "@/api/server.js";
 import logger from "@/utils/logger.js";
 import { initDB, closeDB } from "@/db/index.js";
 import { closeConfigDB } from "@/db/configDb.js";
-import {
-  initInstagramSession,
-  disconnectBrowser,
-} from "@/automation/session.js";
+import { initInstagramSession, disconnectBrowser } from "@/automation/session.js";
 import { attachDataMidToDOM } from "@/automation/chat.js";
 import { eventBus } from "@/events.js";
 import type { AppEvent } from "@/events.js";
@@ -34,7 +19,7 @@ const tracker: ConversationTracker = {
   processedThisSession: new Set<string>(),
 };
 
-const MAX_TRACKED_SESSION_MIDS = 5000;
+const MAX_TRACKED_SESSION_MIDS = 5_000;
 
 function trackProcessedMid(mid: string): void {
   if (tracker.processedThisSession.has(mid)) return;
@@ -46,8 +31,6 @@ function trackProcessedMid(mid: string): void {
     tracker.processedThisSession.delete(oldest);
   }
 }
-
-// Shutdown
 
 let shuttingDown = false;
 
@@ -62,60 +45,55 @@ function registerShutdown(): void {
     process.exit(0);
   };
 
-  process.on("SIGINT", () => shutdown("SIGINT"));
-  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT",  () => void shutdown("SIGINT"));
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
 }
-
-// Event handler
 
 function onAppEvent(event: AppEvent): void {
   if (shuttingDown) return;
+  if (event.type !== "NEW_MESSAGE" && event.type !== "EDIT") return;
 
-  if (event.type === "NEW_MESSAGE" || event.type === "EDIT") {
-    if (event.type === "NEW_MESSAGE") {
-      if (event.timestampMs < tracker.sessionStartTime) {
-        logger.info("Skipping offline message from before session start", {
-          chatId: event.chatId,
-          mid: event.mid,
-          timestampMs: event.timestampMs,
-          sessionStartTime: tracker.sessionStartTime,
-        });
-        return;
-      }
-
-      if (tracker.processedThisSession.has(event.mid)) {
-        logger.info("Skipping already processed message in this session", {
-          chatId: event.chatId,
-          mid: event.mid,
-        });
-        return;
-      }
-
-      trackProcessedMid(event.mid);
-
-      attachDataMidToDOM(event.chatId, event.mid).catch((err) => {
-        logger.warn("Failed to stamp data-mid on DOM message", {
-          chatId: event.chatId,
-          mid: event.mid,
-          error: (err as Error).message,
-        });
+  if (event.type === "NEW_MESSAGE") {
+    if (event.timestampMs < tracker.sessionStartTime) {
+      logger.info("Skipping offline message from before session start", {
+        chatId: event.chatId,
+        mid: event.mid,
+        timestampMs: event.timestampMs,
+        sessionStartTime: tracker.sessionStartTime,
       });
-
-      const config = getConfig();
-      if (event.senderFbid === config.instagram.fbId) return;
+      return;
     }
 
-    processMessage(event.chatId, event.mid).catch((err) => {
-      logger.error("Message processing failed", {
+    if (tracker.processedThisSession.has(event.mid)) {
+      logger.info("Skipping already-processed message in this session", {
+        chatId: event.chatId,
+        mid: event.mid,
+      });
+      return;
+    }
+
+    trackProcessedMid(event.mid);
+
+    attachDataMidToDOM(event.chatId, event.mid).catch((err: unknown) => {
+      logger.warn("Failed to stamp data-mid on DOM message", {
         chatId: event.chatId,
         mid: event.mid,
         error: (err as Error).message,
       });
     });
-  }
-}
 
-// Boot
+    const config = getConfig();
+    if (event.senderFbid === config.instagram.fbId) return;
+  }
+
+  processMessage(event.chatId, event.mid).catch((err: unknown) => {
+    logger.error("Message processing failed", {
+      chatId: event.chatId,
+      mid: event.mid,
+      error: (err as Error).message,
+    });
+  });
+}
 
 async function boot(): Promise<void> {
   logger.info("Starting Auroic…");
@@ -129,25 +107,21 @@ async function boot(): Promise<void> {
   try {
     await initInstagramSession();
   } catch (err) {
-    logger.error("Failed to start browser or init Instagram session", {
+    logger.error("Failed to init Instagram session", {
       error: (err as Error).message,
     });
     process.exit(1);
   }
 
-  // Subscribe to events
   eventBus.on("event", onAppEvent);
-
   logger.info("Boot complete — listening for WebSocket events");
 }
-
-// Entry
 
 registerShutdown();
 initRuntimeConfig();
 startServer();
 
-boot().catch((err) => {
+boot().catch((err: unknown) => {
   logger.error("Fatal error during boot", {
     error: (err as Error).message,
     stack: (err as Error).stack,

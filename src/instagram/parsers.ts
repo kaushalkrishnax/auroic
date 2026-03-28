@@ -220,13 +220,7 @@ export function initThread(threadData: unknown): string | null {
   for (const edge of messages) {
     if (edge.node) parseMessage(edge.node);
   }
-
-  logger.info("Thread initialised", {
-    conversationId: thread.thread_fbid,
-    messages: messages.length,
-    users: users.length,
-  });
-
+  
   return thread.thread_fbid;
 }
 
