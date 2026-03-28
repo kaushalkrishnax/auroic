@@ -53,7 +53,7 @@ export async function connectBrowser() {
   fs.mkdirSync(cfg.chromium.profileDir, { recursive: true });
 
   context = await chromium.launchPersistentContext(cfg.chromium.profileDir, {
-    headless: false,
+    headless: true,
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
