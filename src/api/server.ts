@@ -40,6 +40,11 @@ import { COMMAND_REGISTRY } from "@/command/commandRegistry.js";
 import { executeAction } from "@/router/dispatcher.js";
 import { emitEvent } from "@/events.js";
 import {
+  getOtpPendingRequestedAt,
+  isOtpPending,
+  submitOtpCode,
+} from "@/automation/session.js";
+import {
   getCommandConfigs,
   getSettingsPayload,
   replaceCommandConfigs,
@@ -268,6 +273,47 @@ app.get("/api/commands/registry", (c) => {
 app.get("/api/tts/options", async (c) => {
   try {
     return c.json(await getKokoroTtsOptions());
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
+app.get("/api/otp/status", (c) => {
+  try {
+    return c.json({
+      pending: isOtpPending(),
+      requestedAt: getOtpPendingRequestedAt(),
+    });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
+app.post("/api/otp/submit", async (c) => {
+  try {
+    const body = await c.req.json<{ code?: string }>();
+    const code = String(body.code ?? "").trim();
+
+    if (!code) {
+      return c.json({ error: "code is required" }, 400);
+    }
+
+    if (!isOtpPending()) {
+      return c.json(
+        { success: false, error: "Bot is not currently waiting for OTP" },
+        400,
+      );
+    }
+
+    const accepted = submitOtpCode(code);
+    if (!accepted) {
+      return c.json(
+        { success: false, error: "Failed to submit OTP" },
+        400,
+      );
+    }
+
+    return c.json({ success: true, message: "OTP submitted" });
   } catch (err) {
     return c.json({ error: (err as Error).message }, 500);
   }

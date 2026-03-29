@@ -12,7 +12,7 @@ const SELECTORS = Object.freeze({
 
   submitButton: 'button[type="submit"], div[role="button"][aria-label*="Log"]',
 
-  continueButton: 'div[role="button"][aria-label*="Continue"]',
+  continueButton: 'div[role="button"][aria-label*="Continue"], div[role="button"]:has(span:has-text("Continue"))',
 
   notNowButton:
     'button:has-text("Not Now"), div[role="button"]:has-text("Not Now")',

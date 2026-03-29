@@ -6,10 +6,14 @@ import { attachDataMidsForRecentWindow } from "@/automation/chat.js";
 import { getStartupConversationIds } from "@/db/queries/conversations.js";
 import SELECTORS from "@/instagram/selectors.js";
 import { initMailbox, initThread, parseWebsocketFrame } from "@/instagram/parsers.js";
+import logger from "@/utils/logger.js";
 
 let context: BrowserContext | null = null;
 let page: Page | null = null;
 let polling: NodeJS.Timeout | null = null;
+
+let pendingOtpResolver: ((code: string) => void) | null = null;
+let pendingOtpRequestedAt: number | null = null;
 
 let mailboxReady = false;
 let mailboxResolve: (() => void) | null = null;
@@ -45,6 +49,45 @@ const stopPolling = () => {
   clearInterval(polling);
   polling = null;
 };
+
+export const isOtpPending = () => pendingOtpResolver !== null;
+
+export const getOtpPendingRequestedAt = () => pendingOtpRequestedAt;
+
+export const submitOtpCode = (rawCode: string) => {
+  if (!pendingOtpResolver) return false;
+  const code = rawCode.trim();
+  if (!code) return false;
+  const resolve = pendingOtpResolver;
+  pendingOtpResolver = null;
+  pendingOtpRequestedAt = null;
+  resolve(code);
+  return true;
+};
+
+const waitForOtpCode = (timeoutMs = 5 * 60_000) =>
+  new Promise<string>((resolve, reject) => {
+    if (pendingOtpResolver) {
+      reject(new Error("OTP already pending"));
+      return;
+    }
+
+    pendingOtpRequestedAt = Date.now();
+    const timer = setTimeout(() => {
+      if (pendingOtpResolver === onResolve) {
+        pendingOtpResolver = null;
+        pendingOtpRequestedAt = null;
+      }
+      reject(new Error("OTP timeout"));
+    }, timeoutMs);
+
+    const onResolve = (code: string) => {
+      clearTimeout(timer);
+      resolve(code);
+    };
+
+    pendingOtpResolver = onResolve;
+  });
 
 export async function connectBrowser() {
   if (context) return { context };
@@ -187,6 +230,22 @@ export async function initInstagramSession() {
     await p.fill(SELECTORS.emailInput, cfg.instagram.username);
     await p.fill(SELECTORS.passwordInput, cfg.instagram.password);
     await p.click(SELECTORS.submitButton);
+
+    const requiresOtp =
+      p.url().includes("/auth_platform/codeentry/") ||
+      (await p
+        .waitForURL(/\/auth_platform\/codeentry\//)
+        .then(() => true)
+        .catch(() => false));
+
+    if (requiresOtp) {
+      await p.waitForSelector(SELECTORS.emailInput);
+      logger.info("Instagram 2FA code required; waiting for dashboard OTP submission");
+      const code = await waitForOtpCode();
+      await p.fill(SELECTORS.emailInput, code);
+      await p.click(SELECTORS.continueButton);
+    }
+
     await p.waitForURL(/\/direct\//).catch(() => {});
   }
 
@@ -208,6 +267,8 @@ export async function initInstagramSession() {
 
 export async function disconnectBrowser() {
   stopPolling();
+  pendingOtpResolver = null;
+  pendingOtpRequestedAt = null;
   await context?.close().catch(() => {});
   context = null;
   page = null;

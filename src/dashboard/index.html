@@ -258,6 +258,56 @@
       color: var(--text);
     }
 
+    .otp-panel {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      border-radius: 999px;
+      background: rgba(18, 24, 42, 0.95);
+      border: 1px solid rgba(255, 143, 63, 0.45);
+      box-shadow: inset 0 0 0 1px rgba(255, 79, 132, 0.15);
+    }
+
+    .otp-label {
+      font-size: 11px;
+      color: var(--yellow);
+      font-family: var(--mono);
+      white-space: nowrap;
+    }
+
+    .otp-input {
+      width: 130px;
+      background: var(--bg-soft);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 7px 10px;
+      color: var(--text);
+      font-size: 12px;
+      font-family: var(--mono);
+    }
+
+    .otp-input:focus {
+      outline: none;
+      border-color: var(--yellow);
+    }
+
+    .otp-submit {
+      border: none;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #ff9b4a, #ff4f84);
+      color: #fff;
+      font-size: 11px;
+      font-family: var(--mono);
+      padding: 7px 12px;
+      cursor: pointer;
+    }
+
+    .otp-submit:disabled {
+      opacity: 0.7;
+      cursor: not-allowed;
+    }
+
     .content {
       flex: 1;
       overflow-y: auto;
@@ -1422,6 +1472,14 @@
         font-size: 11px;
       }
 
+      .otp-panel {
+        max-width: 100%;
+      }
+
+      .otp-input {
+        width: 110px;
+      }
+
       .content {
         padding: 10px;
       }
@@ -1589,6 +1647,19 @@
     <div class="topbar">
       <h1 id="viewTitle">Overview</h1>
       <input type="text" id="searchInput" placeholder="Search…" oninput="handleSearch(this.value)" />
+      <div class="otp-panel hidden" id="otpPanel">
+        <span class="otp-label" id="otpLabel">2FA required</span>
+        <input
+          id="otpInput"
+          class="otp-input"
+          type="text"
+          inputmode="numeric"
+          autocomplete="one-time-code"
+          placeholder="Enter code"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();submitOtpFromDashboard();}"
+        />
+        <button id="otpSubmit" class="otp-submit" onclick="submitOtpFromDashboard()">Submit</button>
+      </div>
       <button class="btn secondary" onclick="refreshAll()">↻ Refresh</button>
     </div>
     <div class="content" id="content"></div>
@@ -1609,6 +1680,11 @@
       commands: [],
       commandRegistry: [],
       ttsOptions: null,
+      otp: {
+        pending: false,
+        requestedAt: null,
+        submitting: false,
+      },
       config: null,
       configDirty: false,
       routerFeed: [], // live router decisions / events
@@ -1695,7 +1771,7 @@
     }
 
     async function refreshAll() {
-      const [conversations, messages, users, media, reactions, outgoing, commands, commandRegistry, cfg, ttsOptions] =
+      const [conversations, messages, users, media, reactions, outgoing, commands, commandRegistry, cfg, ttsOptions, otpStatus] =
         await Promise.all([
           fetchJSON("/api/conversations"),
           fetchJSON("/api/messages?limit=200"),
@@ -1707,6 +1783,7 @@
           fetchJSON("/api/commands/registry"),
           fetchJSON("/config"),
           fetchJSON("/api/tts/options"),
+          fetchJSON("/api/otp/status"),
         ]);
       if (conversations) state.conversations = conversations;
       if (messages) state.messages = messages;
@@ -1718,6 +1795,10 @@
       if (commandRegistry) state.commandRegistry = commandRegistry;
       if (cfg && !state.configDirty) state.config = cfg;
       if (ttsOptions) state.ttsOptions = ttsOptions;
+      if (otpStatus && typeof otpStatus.pending === "boolean") {
+        state.otp.pending = otpStatus.pending;
+        state.otp.requestedAt = otpStatus.requestedAt || null;
+      }
 
       state.counts = {
         conversations: state.conversations.length,
@@ -1733,8 +1814,80 @@
         ),
       };
       updateBadges();
+      renderOtpPanel();
       // Don't wipe the config editor on unrelated data refreshes.
       if (state.view !== "config") renderView();
+    }
+
+    async function refreshOtpStatus() {
+      const status = await fetchJSON("/api/otp/status");
+      if (!status || typeof status.pending !== "boolean") return;
+      state.otp.pending = status.pending;
+      state.otp.requestedAt = status.requestedAt || null;
+      renderOtpPanel();
+    }
+
+    function renderOtpPanel() {
+      const panel = document.getElementById("otpPanel");
+      const label = document.getElementById("otpLabel");
+      const input = document.getElementById("otpInput");
+      const submit = document.getElementById("otpSubmit");
+      if (!panel || !label || !input || !submit) return;
+
+      panel.classList.toggle("hidden", !state.otp.pending);
+
+      if (!state.otp.pending) {
+        input.value = "";
+        submit.disabled = false;
+        state.otp.submitting = false;
+        return;
+      }
+
+      const requestedAt = state.otp.requestedAt
+        ? new Date(state.otp.requestedAt).toLocaleTimeString()
+        : null;
+      label.textContent = requestedAt
+        ? `2FA required since ${requestedAt}`
+        : "2FA required";
+
+      submit.disabled = state.otp.submitting;
+    }
+
+    async function submitOtpFromDashboard() {
+      if (!state.otp.pending || state.otp.submitting) return;
+
+      const input = document.getElementById("otpInput");
+      const submit = document.getElementById("otpSubmit");
+      const code = String(input?.value || "").trim();
+
+      if (!code) {
+        showToast("Enter OTP code");
+        return;
+      }
+
+      state.otp.submitting = true;
+      if (submit) submit.disabled = true;
+
+      try {
+        const res = await fetch("/api/otp/submit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code }),
+        });
+        const payload = await res.json().catch(() => null);
+
+        if (!res.ok) {
+          throw new Error(payload?.error || `HTTP ${res.status}`);
+        }
+
+        if (input) input.value = "";
+        showToast("OTP submitted");
+      } catch (err) {
+        showToast(`OTP submit failed: ${err?.message || String(err)}`);
+      } finally {
+        state.otp.submitting = false;
+        await refreshOtpStatus();
+      }
     }
 
     async function loadConfig() {
@@ -3051,6 +3204,7 @@
     (async function init() {
       connectSSE();
       await Promise.all([refreshAll(), loadConfig()]);
+      setInterval(refreshOtpStatus, 2500);
       lucide.createIcons();
       renderView();
     })();
