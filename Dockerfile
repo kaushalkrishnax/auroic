@@ -46,13 +46,12 @@ COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/start.sh     ./start.sh
 COPY drizzle ./drizzle
 
-# FIX: Hugging Face requires UID 1000 for permissions
+# FIX: Use the existing 'node' user (UID 1000) instead of creating a new one
 RUN mkdir -p /app/data \
-    && useradd -m -u 1000 auroic \
-    && chown -R auroic:auroic /app \
-    && chown -R auroic:auroic /ms-playwright
+    && chown -R node:node /app \
+    && chown -R node:node /ms-playwright
 
-USER auroic
+USER node
 
 # Hugging Face exclusively uses port 7860
 EXPOSE 7860
