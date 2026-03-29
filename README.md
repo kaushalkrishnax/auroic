@@ -1,3 +1,9 @@
+---
+title: Auroic
+emoji: 🤖
+pinned: false
+---
+
 # Auroic — Instagram AI Assistant
 
 **Auroic** is a local-first Instagram DM automation agent.
