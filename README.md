@@ -1,6 +1,8 @@
 ---
 title: Auroic
 emoji: 🤖
+colorFrom: yellow
+colorTo: red
 pinned: false
 ---
 
