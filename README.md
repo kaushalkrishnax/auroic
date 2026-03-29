@@ -3,6 +3,7 @@ title: Auroic
 emoji: 🤖
 colorFrom: yellow
 colorTo: red
+sdk: docker
 pinned: false
 ---
 
