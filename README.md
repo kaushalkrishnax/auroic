@@ -4,6 +4,7 @@ emoji: 🤖
 colorFrom: yellow
 colorTo: red
 sdk: docker
+app_port: 7860
 pinned: false
 ---
 
@@ -35,6 +36,7 @@ All processing is local. Credentials stay in your browser profile.
   - [Prerequisites](#prerequisites)
   - [Model Setup](#model-setup)
   - [Configuration](#configuration)
+  - [Instagram OTP (2FA) Input](#instagram-otp-2fa-input)
   - [Virtual Audio Setup](#virtual-audio-setup-optional)
   - [Run the System](#run-the-system)
 - [Reliability](#reliability)
@@ -52,7 +54,7 @@ All processing is local. Credentials stay in your browser profile.
 - **Media actions**: reactions, GIFs, stickers, voice notes, and music
 - **Optional local TTS** with `kokoro-js`
 - **Real-time message handling** via WebSocket interception
-- **Dashboard** at `localhost:3789` for live monitoring and config
+- **Dashboard** at `localhost:7860` for live monitoring and config
 - **Hot-reload config** from dashboard/API without restart
 - **Reliability features**: processing locks, reconnects, graceful shutdown
 
@@ -66,6 +68,8 @@ Playwright runs a persistent headless Chromium profile, so login sessions surviv
 Instagram data is captured through:
 - GraphQL responses at startup (inbox/thread bootstrap)
 - WebSocket frames for real-time events (new/edit/delete/reaction)
+
+If Instagram requests 2FA during login, Auroic pauses startup and waits for OTP submission from the dashboard/API, then resumes the login flow.
 
 The bot auto-detects its own Facebook ID at boot and reconnects automatically after page/context failures.
 
@@ -141,7 +145,7 @@ Two SQLite databases via **Drizzle ORM**:
 
 ### HTTP API & Dashboard
 
-Hono server runs on **http://localhost:3789** for live monitoring and config edits.
+Hono server runs on **http://localhost:7860** for live monitoring and config edits.
 
 | Method     | Route                             | Description                                                                    |
 | ---------- | --------------------------------- | ------------------------------------------------------------------------------ |
@@ -155,6 +159,8 @@ Hono server runs on **http://localhost:3789** for live monitoring and config edi
 | `GET`      | `/api/media`                      | Recent media attachments                                                       |
 | `GET`      | `/api/reactions`                  | Recent reactions                                                               |
 | `GET`      | `/api/outgoing`                   | Outgoing action log                                                            |
+| `GET`      | `/api/otp/status`                 | 2FA status (`pending`, `requestedAt`) for dashboard/API clients                |
+| `POST`     | `/api/otp/submit`                 | Submit OTP code (`{ "code": "123456" }`) when 2FA is pending                 |
 
 ### Chat Interaction
 
@@ -278,11 +284,28 @@ CONFIG_DB_PATH=./data/config.db
 
 **Runtime configuration** (triggers, prompts, LLM effort models, router host/model/options, commands, TTS) is stored in `config.db` and can be edited via:
 
-- **Dashboard UI**: `http://localhost:3789` → Config tab
+- **Dashboard UI**: `http://localhost:7860` → Config tab
 - **API**: `POST /config` with JSON payload
 - **Direct SQL**: Use Drizzle Studio (`npm run db:studio`) or SQLite client
 
 See `.env.example` for all available variables.
+
+### Instagram OTP (2FA) Input
+
+When Instagram challenges login with 2FA, Auroic now waits for OTP through the dashboard/API instead of terminal input.
+
+1. Start Auroic normally.
+2. Open the dashboard at `http://localhost:7860`.
+3. If 2FA is required, an OTP panel appears in the top bar.
+4. Enter the code and click **Submit** (or press Enter).
+5. Auroic resumes Playwright login automatically after successful submission.
+
+Notes:
+
+- OTP is only accepted while status is pending.
+- Pending status can be checked via `GET /api/otp/status`.
+- API submission endpoint: `POST /api/otp/submit` with JSON body `{ "code": "123456" }`.
+- The OTP wait window is time-limited (default 5 minutes), so submit promptly.
 
 ---
 
@@ -438,7 +461,7 @@ Each field accepts multiple values. `onReply: true` enables reply-based activati
 
 **Edit triggers via:**
 
-- Dashboard: `http://localhost:3789` → Config → Triggers
+- Dashboard: `http://localhost:7860` → Config → Triggers
 - API: `POST /config` with updated JSON
 
 ---

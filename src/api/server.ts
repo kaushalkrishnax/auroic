@@ -474,6 +474,7 @@ export function startServer(): void {
   serve({
     fetch: app.fetch,
     port: process.env.PORT ? Number(process.env.PORT) : 7860,
+    hostname: "0.0.0.0"
   });
   logger.info(
     `Dashboard running → http://localhost:${process.env.PORT ?? 7860}`,
