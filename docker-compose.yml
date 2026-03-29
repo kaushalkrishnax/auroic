@@ -9,8 +9,6 @@ services:
     container_name: auroic
     restart: unless-stopped
 
-    network_mode: host
-
     env_file:
       - .env
 
@@ -18,9 +16,10 @@ services:
       - NODE_ENV=production
       - DB_PATH=/app/data/state.db
       - CONFIG_DB_PATH=/app/data/config.db
-      - PROFILE_DIR=/app/data/chrome-auroic
+      - CHROMIUM_PROFILE_DIR=/app/data/chrome-auroic
       - XDG_RUNTIME_DIR=/tmp/runtime-auroic
       - NODE_OPTIONS=--max-old-space-size=512
+      - PORT=7860
 
     volumes:
       - ./data:/app/data
@@ -35,11 +34,13 @@ services:
         reservations:
           memory: 1G
 
+    # Updated to map the Hugging Face port
     ports:
-      - "3789:3789"
+      - "7860:7860"
 
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3789/health"]
+      # Updated the healthcheck to hit the correct port
+      test: ["CMD", "wget", "-qO-", "http://localhost:7860/health"]
       interval: 30s
       timeout: 10s
       retries: 3

@@ -263,7 +263,7 @@ AI_API_KEY=your_api_key
 
 # Paths (optional overrides)
 DB_PATH=./data/state.db
-PROFILE_DIR=./data/chrome-auroic
+CHROMIUM_PROFILE_DIR=./data/chrome-auroic
 CONFIG_DB_PATH=./data/config.db
 ```
 

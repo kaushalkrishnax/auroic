@@ -1,21 +1,3 @@
-# Stage 1: Builder
-# node:20-slim is sufficient now — no native module compilation needed
-FROM node:20-slim AS builder
-
-WORKDIR /app
-
-COPY package.json package-lock.json* ./
-RUN npm ci
-
-COPY tsconfig.json ./
-COPY src ./src
-COPY drizzle ./drizzle
-
-COPY scripts/start.sh ./start.sh
-RUN chmod +x start.sh
-
-RUN npm run build && npm prune --omit=dev
-
 # Stage 2: Runtime
 FROM node:20-slim AS runtime
 
@@ -32,10 +14,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Playwright Chromium deps BEFORE copying app
+# Install Playwright Chromium deps (Must be run as root)
 RUN npx -y playwright install-deps chromium-headless-shell \
     && rm -rf /var/lib/apt/lists/*
 
+# Install the browser binaries
 RUN npx -y playwright install chromium-headless-shell
 
 # Copy built artifacts and pruned node_modules from builder
@@ -45,15 +28,17 @@ COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/start.sh     ./start.sh
 COPY drizzle ./drizzle
 
-# Create runtime directories and non-root user
+# FIX: Create a user explicitly with UID 1000 to match Hugging Face's requirements
 RUN mkdir -p /app/data \
-    && groupadd -r auroic \
-    && useradd -r -g auroic -s /sbin/nologin auroic \
+    && useradd -m -u 1000 auroic \
     && chown -R auroic:auroic /app \
     && chown -R auroic:auroic /ms-playwright
 
 USER auroic
 
-EXPOSE 3789
+# FIX: Hugging Face exclusively uses port 7860
+EXPOSE 7860
+ENV PORT=7860
 
+# Ensure your index.js is configured to listen on process.env.PORT
 CMD ["node", "--enable-source-maps", "dist/index.js"]

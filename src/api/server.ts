@@ -164,7 +164,10 @@ app.post("/config", async (c) => {
     }
 
     const existing = getSettingsPayload();
-    const merged = { ...existing, ...body } as unknown as RuntimeSettingsPayload;
+    const merged = {
+      ...existing,
+      ...body,
+    } as unknown as RuntimeSettingsPayload;
     upsertSettingsPayload(merged);
     reloadConfig();
     return c.json({ success: true });
@@ -277,13 +280,18 @@ app.post("/api/commands/save", async (c) => {
       return c.json({ error: "commands must be an array" }, 400);
     }
 
-    const validCommandNames = new Set(COMMAND_REGISTRY.map((entry) => entry.name));
+    const validCommandNames = new Set(
+      COMMAND_REGISTRY.map((entry) => entry.name),
+    );
     const sanitizedRows: CommandConfigRow[] = [];
 
     for (const row of body.commands) {
       const command = String(row.command ?? "").trim();
       if (!command || !validCommandNames.has(command)) {
-        return c.json({ error: `Invalid command: ${command || "(empty)"}` }, 400);
+        return c.json(
+          { error: `Invalid command: ${command || "(empty)"}` },
+          400,
+        );
       }
 
       const aliases = Array.isArray(row.aliases) ? row.aliases : [];
@@ -293,8 +301,12 @@ app.post("/api/commands/save", async (c) => {
 
       sanitizedRows.push({
         command,
-        aliases: aliases.map((value) => String(value).trim().toLowerCase()).filter(Boolean),
-        filterKeywords: filterKeywords.map((value) => String(value).trim().toLowerCase()).filter(Boolean),
+        aliases: aliases
+          .map((value) => String(value).trim().toLowerCase())
+          .filter(Boolean),
+        filterKeywords: filterKeywords
+          .map((value) => String(value).trim().toLowerCase())
+          .filter(Boolean),
         isEnabled: Boolean(row.isEnabled),
         handlerName: String(row.handlerName ?? ""),
       });
@@ -413,6 +425,11 @@ app.post("/api/commands/execute", async (c) => {
 // Start
 
 export function startServer(): void {
-  serve({ fetch: app.fetch, port: 3789 });
-  logger.info("Dashboard running → http://localhost:3789");
+  serve({
+    fetch: app.fetch,
+    port: process.env.PORT ? Number(process.env.PORT) : 7860,
+  });
+  logger.info(
+    `Dashboard running → http://localhost:${process.env.PORT ?? 7860}`,
+  );
 }
