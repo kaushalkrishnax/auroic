@@ -3,7 +3,7 @@ set -e
 
 MODEL_PATH=/app/models/auroic-router/auroic-router-0.6b.q8_0.gguf
 MODELFILE_PATH=/app/models/auroic-router/Modelfile
-KOKORO_MODEL_PATH=/app/models/kokoro-tts/model_quantized.onnx
+KOKORO_MODEL_PATH=/app/models/kokoro-tts/onnx/model_quantized.onnx
 VOICE_DIR="/app/models/kokoro-tts/voices"
 
 mkdir -p "$VOICE_DIR"
@@ -21,9 +21,7 @@ VOICES=(
   "bm_lewis"
 )
 
-# ---------------------------
 # Download Router Model
-# ---------------------------
 if [ ! -f "$MODEL_PATH" ]; then
   echo "Downloading router model..."
   mkdir -p /app/models/auroic-router
@@ -35,9 +33,7 @@ if [ ! -f "$MODEL_PATH" ]; then
     -o "$MODELFILE_PATH"
 fi
 
-# ---------------------------
 # Download Kokoro TTS
-# ---------------------------
 if [ ! -f "$KOKORO_MODEL_PATH" ]; then
   echo "Downloading Kokoro TTS model..."
   mkdir -p /app/models/kokoro-tts/onnx
@@ -57,9 +53,7 @@ for VOICE in "${VOICES[@]}"; do
   fi
 done
 
-# ---------------------------
-# START OLLAMA (CRITICAL FIX)
-# ---------------------------
+# START OLLAMA
 echo "Starting Ollama..."
 ollama serve > /tmp/ollama.log 2>&1 &
 
@@ -71,16 +65,12 @@ done
 
 echo "Ollama is ready"
 
-# ---------------------------
-# REGISTER YOUR CUSTOM MODEL
-# ---------------------------
+# REGISTER CUSTOM MODEL
 if ! ollama list | grep -q "auroic-router"; then
   echo "Creating Ollama model..."
   ollama create auroic-router -f "$MODELFILE_PATH"
 fi
 
-# ---------------------------
-# START YOUR APP
-# ---------------------------
+# START APP
 echo "Starting Node app..."
 exec node --enable-source-maps dist/index.js
