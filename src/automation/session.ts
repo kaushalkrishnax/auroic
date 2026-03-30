@@ -5,7 +5,11 @@ import getConfig from "@/runtime/index.js";
 import { attachDataMidsForRecentWindow } from "@/automation/chat.js";
 import { getStartupConversationIds } from "@/db/queries/conversations.js";
 import SELECTORS from "@/instagram/selectors.js";
-import { initMailbox, initThread, parseWebsocketFrame } from "@/instagram/parsers.js";
+import {
+  initMailbox,
+  initThread,
+  parseWebsocketFrame,
+} from "@/instagram/parsers.js";
 import logger from "@/utils/logger.js";
 
 let context: BrowserContext | null = null;
@@ -36,7 +40,9 @@ const waitMailbox = (t = 45000) =>
     ? Promise.resolve()
     : Promise.race([
         mailboxPromise,
-        new Promise((_, rej) => setTimeout(() => rej(new Error("Mailbox timeout")), t)),
+        new Promise((_, rej) =>
+          setTimeout(() => rej(new Error("Mailbox timeout")), t),
+        ),
       ]);
 
 const startPolling = (p: Page) => {
@@ -200,7 +206,9 @@ export const handleDialogs = async (p: Page) => {
 };
 
 const openChat = async (p: Page, id: string) => {
-  await p.goto(`https://www.instagram.com/direct/t/${id}/`, { waitUntil: "domcontentloaded" });
+  await p.goto(`https://www.instagram.com/direct/t/${id}/`, {
+    waitUntil: "domcontentloaded",
+  });
   await p.waitForURL(new RegExp(`/direct/t/${id}`));
   await p.waitForSelector(SELECTORS.messageInput);
 };
@@ -240,7 +248,9 @@ export async function initInstagramSession() {
 
     if (requiresOtp) {
       await p.waitForSelector(SELECTORS.emailInput);
-      logger.info("Instagram 2FA code required; waiting for dashboard OTP submission");
+      logger.info(
+        "Instagram 2FA code required; waiting for dashboard OTP submission",
+      );
       const code = await waitForOtpCode();
       await p.fill(SELECTORS.emailInput, code);
       await p.click(SELECTORS.continueButton);

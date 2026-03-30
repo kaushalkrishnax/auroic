@@ -220,7 +220,7 @@ export function initThread(threadData: unknown): string | null {
   for (const edge of messages) {
     if (edge.node) parseMessage(edge.node);
   }
-  
+
   return thread.thread_fbid;
 }
 

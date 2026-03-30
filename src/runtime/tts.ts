@@ -6,7 +6,7 @@ import path from "path";
 
 let tts: KokoroTTS | null = null;
 
-const KOKORO_MODEL_ID = path.join(process.cwd(), "models", "kokoro-tts")
+const KOKORO_MODEL_ID = path.join(process.cwd(), "models", "kokoro-tts");
 const SUPPORTED_DTYPES = ["q8", "fp16", "fp32"] as const;
 const SUPPORTED_VOICES = [
   "af",

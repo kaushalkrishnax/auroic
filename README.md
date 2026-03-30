@@ -66,6 +66,7 @@ All processing is local. Credentials stay in your browser profile.
 
 Playwright runs a persistent headless Chromium profile, so login sessions survive restarts.
 Instagram data is captured through:
+
 - GraphQL responses at startup (inbox/thread bootstrap)
 - WebSocket frames for real-time events (new/edit/delete/reaction)
 
@@ -95,12 +96,13 @@ SQLite processing locks prevent duplicate handling and stale locks are cleared a
 
 ### Two-Model Strategy
 
-| Stage  | Model                 | Purpose |
-| ------ | --------------------- | ------- |
+| Stage  | Model                 | Purpose                                          |
+| ------ | --------------------- | ------------------------------------------------ |
 | Router | Local Ollama model    | Fast local decision: action type, target, effort |
-| LLM    | OpenAI-compatible API | Text generation/translation only when needed |
+| LLM    | OpenAI-compatible API | Text generation/translation only when needed     |
 
 Router output fields:
+
 - `TYPE`: `text`, `react`, `media`, `ignore`
 - `TARGET`: candidate slot (`C1`-`C3`)
 - `TITLE`: hint for downstream action (emoji/search query/etc.)
@@ -108,12 +110,12 @@ Router output fields:
 
 ### Action Types
 
-| Type     | Behavior |
-| -------- | -------- |
+| Type     | Behavior                                               |
+| -------- | ------------------------------------------------------ |
 | `text`   | Generate reply with LLM using history + target message |
-| `react`  | Add emoji reaction from `TITLE` |
-| `ignore` | Skip processing |
-| `media`  | Try sticker first, then GIF fallback using `TITLE` |
+| `react`  | Add emoji reaction from `TITLE`                        |
+| `ignore` | Skip processing                                        |
+| `media`  | Try sticker first, then GIF fallback using `TITLE`     |
 
 ### Runtime Configuration
 
@@ -160,7 +162,7 @@ Hono server runs on **http://localhost:7860** for live monitoring and config edi
 | `GET`      | `/api/reactions`                  | Recent reactions                                                               |
 | `GET`      | `/api/outgoing`                   | Outgoing action log                                                            |
 | `GET`      | `/api/otp/status`                 | 2FA status (`pending`, `requestedAt`) for dashboard/API clients                |
-| `POST`     | `/api/otp/submit`                 | Submit OTP code (`{ "code": "123456" }`) when 2FA is pending                 |
+| `POST`     | `/api/otp/submit`                 | Submit OTP code (`{ "code": "123456" }`) when 2FA is pending                   |
 
 ### Chat Interaction
 
@@ -174,12 +176,12 @@ They are matched by aliases/keywords and require slash-delimited command text.
 
 **Available Commands:**
 
-| Command           | Trigger Keywords            | Action Type | Description                                       |
-| ----------------- | --------------------------- | ----------- | ------------------------------------------------- |
-| `send_gif`        | `gif`, `meme`               | media       | Search and send a GIF matching the query          |
-| `send_sticker`    | `sticker`                   | media       | Search and send a sticker                         |
-| `send_voice_note` | `voice`, `speak`            | media       | Generate TTS audio and send as voice note         |
-| `play_music`      | `play`, `music`, `song`     | media       | Find and play music via Instagram's native player |         |
+| Command           | Trigger Keywords        | Action Type | Description                                       |
+| ----------------- | ----------------------- | ----------- | ------------------------------------------------- | --- |
+| `send_gif`        | `gif`, `meme`           | media       | Search and send a GIF matching the query          |
+| `send_sticker`    | `sticker`               | media       | Search and send a sticker                         |
+| `send_voice_note` | `voice`, `speak`        | media       | Generate TTS audio and send as voice note         |
+| `play_music`      | `play`, `music`, `song` | media       | Find and play music via Instagram's native player |     |
 
 Commands are managed via `config.db` and can be enabled/disabled, aliased, and filtered per-command through the dashboard.
 
@@ -207,14 +209,14 @@ Auroic uses **`kokoro-js`** for local TTS. TTS is optional and mainly used for v
 
 ### Prerequisites
 
-| Requirement         | Version/Details                               |
-| ------------------- | --------------------------------------------- |
-| Node.js             | ≥ 20 LTS                                      |
+| Requirement         | Version/Details                                 |
+| ------------------- | ----------------------------------------------- |
+| Node.js             | ≥ 20 LTS                                        |
 | Ollama              | Local router inference service (`ollama serve`) |
 | Router Model        | `auroic-router:latest` in Ollama (**Required**) |
-| TTS Runtime         | `kokoro-js` package (included in dependencies) |
-| Docker              | ≥ 24 _(optional)_                             |
-| PipeWire/PulseAudio | Required for TTS voice note recording (Linux) |
+| TTS Runtime         | `kokoro-js` package (included in dependencies)  |
+| Docker              | ≥ 24 _(optional)_                               |
+| PipeWire/PulseAudio | Required for TTS voice note recording (Linux)   |
 
 ---
 
@@ -386,6 +388,7 @@ pactl list short sources | grep tts_mic
 ### Run the System
 
 #### Local Development
+
 ```bash
 # Install dependencies (also installs Playwright Chromium)
 npm install
@@ -395,21 +398,24 @@ npm run dev
 ```
 
 #### Production
+
 ```bash
 # Build the project
 npm run build
 # Start the server
 npm start
 ```
+
 Or with PM2 for process management:
 
 ```bash
-pm2 ecosystem.config.json 
+pm2 ecosystem.config.json
 ```
 
 #### Docker
 
 **Option 1: Docker Compose (Recommended)**
+
 ```bash
 # Start the service
 docker compose up -d
@@ -422,6 +428,7 @@ docker compose down
 ```
 
 **Option 2: Docker CLI**
+
 ```bash
 # Build image
 docker build -t auroic .
@@ -489,6 +496,7 @@ Each field accepts multiple values. `onReply: true` enables reply-based activati
 ---
 
 ## Acknowledgments
+
 - The open-source community for Ollama, Kokoro, and Playwright tools
 - Hugging Face for hosting the models
 - The users who provided feedback and ideas during development
@@ -496,6 +504,7 @@ Each field accepts multiple values. `onReply: true` enables reply-based activati
 ---
 
 ## Disclaimer
+
 For educational and experimental use only. Use responsibly and follow Instagram's terms of service. The author is not liable for misuse.
 
 ## License

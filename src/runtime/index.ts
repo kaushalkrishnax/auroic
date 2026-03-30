@@ -73,11 +73,12 @@ export function getConfig() {
   const llm = runtimeSettings.llm;
   const router = runtimeSettings.router;
   const tts = runtimeSettings.tts;
-  const igSettings = (runtimeSettings.instagram ?? {}) as Record<string, unknown>;
+  const igSettings = (runtimeSettings.instagram ?? {}) as Record<
+    string,
+    unknown
+  >;
   const igChatIds = Array.isArray(igSettings.chatIds)
-    ? igSettings.chatIds
-        .map((value) => String(value).trim())
-        .filter(Boolean)
+    ? igSettings.chatIds.map((value) => String(value).trim()).filter(Boolean)
     : [];
 
   return {

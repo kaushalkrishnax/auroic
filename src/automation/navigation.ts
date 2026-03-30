@@ -31,7 +31,9 @@ function buildTitleRegex(title: string): RegExp {
 async function ensureThreadListVisible(): Promise<void> {
   const page = getPage();
   const threadList = page
-    .locator(`${SELECTORS.threadList}, nav[role=\"navigation\"], [aria-label*=\"Thread\"]`)
+    .locator(
+      `${SELECTORS.threadList}, nav[role=\"navigation\"], [aria-label*=\"Thread\"]`,
+    )
     .first();
 
   if (await threadList.isVisible().catch(() => false)) return;
@@ -49,9 +51,9 @@ export async function clickChatByTitle(title: string) {
 
   await ensureThreadListVisible();
 
-  const target = p.locator(
-    `${SELECTORS.threadList} span[title="${title}"]`
-  ).first();
+  const target = p
+    .locator(`${SELECTORS.threadList} span[title="${title}"]`)
+    .first();
 
   if (!(await target.count())) return false;
 
@@ -59,7 +61,7 @@ export async function clickChatByTitle(title: string) {
 
   await item.click().catch(() => {});
   return true;
-} 
+}
 
 async function navigateViaGoto(chatId: string): Promise<void> {
   const page = getPage();
@@ -80,7 +82,10 @@ export async function navigateToChat(chatId: string): Promise<void> {
   const current = page.url();
   const input = page.locator(SELECTORS.messageInput).first();
 
-  if (current.includes(`/direct/t/${chatId}`) && (await input.isVisible().catch(() => false))) {
+  if (
+    current.includes(`/direct/t/${chatId}`) &&
+    (await input.isVisible().catch(() => false))
+  ) {
     logger.info("Already on target chat", { chatId });
     return;
   }
@@ -98,9 +103,15 @@ export async function navigateToChat(chatId: string): Promise<void> {
     }
 
     await clickChatByTitle(chatTitle);
-    console.log("Clicked chat in thread list, waiting for input to appear…", { chatId, title: chatTitle });
+    console.log("Clicked chat in thread list, waiting for input to appear…", {
+      chatId,
+      title: chatTitle,
+    });
     await input.waitFor({ state: "visible", timeout: 8000 });
-    logger.info("Chat loaded via thread list click", { chatId, title: chatTitle });
+    logger.info("Chat loaded via thread list click", {
+      chatId,
+      title: chatTitle,
+    });
     return;
   } catch (clickErr) {
     try {

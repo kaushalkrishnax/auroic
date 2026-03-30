@@ -3,7 +3,10 @@ import { startServer } from "@/api/server.js";
 import logger from "@/utils/logger.js";
 import { initDB, closeDB } from "@/db/index.js";
 import { closeConfigDB } from "@/db/configDb.js";
-import { initInstagramSession, disconnectBrowser } from "@/automation/session.js";
+import {
+  initInstagramSession,
+  disconnectBrowser,
+} from "@/automation/session.js";
 import { attachDataMidToDOM } from "@/automation/chat.js";
 import { eventBus } from "@/events.js";
 import type { AppEvent } from "@/events.js";
@@ -45,7 +48,7 @@ function registerShutdown(): void {
     process.exit(0);
   };
 
-  process.on("SIGINT",  () => void shutdown("SIGINT"));
+  process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
 }
 

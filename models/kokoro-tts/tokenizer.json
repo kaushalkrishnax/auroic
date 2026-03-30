@@ -43,12 +43,8 @@
     "special_tokens": {
       "$": {
         "id": "$",
-        "ids": [
-          0
-        ],
-        "tokens": [
-          "$"
-        ]
+        "ids": [0],
+        "tokens": ["$"]
       }
     }
   },

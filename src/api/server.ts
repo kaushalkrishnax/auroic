@@ -16,6 +16,11 @@
  *   GET  /api/commands                     — all command config rows
  *   GET  /api/commands/registry            — available registry command names
  *   POST /api/commands/save                — save command table edits
+ *   POST /api/shell/exec                   — spawn a shell command
+ *   POST /api/shell/stdin                  — send stdin to a running command
+ *   GET  /api/shell/stream/:sessionId      — SSE stream for command output
+ *   POST /api/shell/kill                   — kill a running process
+ *   GET  /api/shell/cwd                    — get server working directory
  */
 
 import { Hono } from "hono";
@@ -24,6 +29,8 @@ import { cors } from "hono/cors";
 import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
+import { spawn, type ChildProcess } from "child_process";
+import crypto from "crypto";
 import logger from "@/utils/logger.js";
 import { eventBus } from "@/events.js";
 import { BOT_FBID, reloadConfig } from "@/runtime/index.js";
@@ -63,6 +70,28 @@ const DASHBOARD_PATH = path.join(
   "../dashboard/index.html",
 );
 
+// Shell sessions
+
+type OutputEntry =
+  | { type: "stdout" | "stderr"; data: string }
+  | { type: "exit"; code: number };
+
+interface ShellSession {
+  id: string;
+  process: ChildProcess;
+  cwd: string;
+  command: string;
+  startedAt: number;
+  exited: boolean;
+  exitCode: number | null;
+  outputBuffer: OutputEntry[];
+  /** All active SSE subscribers for this session (supports multiple tabs) */
+  subscribers: Set<(entry: OutputEntry) => void>;
+}
+
+const shellSessions = new Map<string, ShellSession>();
+const SERVER_CWD = process.cwd();
+
 // App
 
 const app = new Hono();
@@ -89,13 +118,17 @@ app.get("/events", (c) => {
   const { readable, writable } = new TransformStream<Uint8Array>();
   const writer = writable.getWriter();
   const encoder = new TextEncoder();
+  let closed = false;
 
   const send = (event: AppEvent) => {
+    if (closed) return;
     const data = `data: ${JSON.stringify(event)}\n\n`;
     writer.write(encoder.encode(data)).catch(() => cleanup());
   };
 
   const cleanup = () => {
+    if (closed) return;
+    closed = true;
     eventBus.off("event", send);
     writer.close().catch((err) => {
       logger.debug("SSE writer close failed", {
@@ -107,6 +140,10 @@ app.get("/events", (c) => {
   eventBus.on("event", send);
 
   const heartbeat = setInterval(() => {
+    if (closed) {
+      clearInterval(heartbeat);
+      return;
+    }
     writer.write(encoder.encode(": heartbeat\n\n")).catch(() => {
       clearInterval(heartbeat);
       cleanup();
@@ -134,7 +171,6 @@ app.get("/config", async (c) => {
   try {
     const settings = getSettingsPayload();
     const config: Record<string, unknown> = { ...settings };
-    // Merge runtime-detected bot identity so the dashboard can identify outgoing messages
     config.instagram = {
       ...((config.instagram as Record<string, unknown>) ?? {}),
       fbId: BOT_FBID,
@@ -182,7 +218,7 @@ app.post("/config", async (c) => {
   }
 });
 
-// Data API
+// Data API─
 
 app.get("/api/conversations", (c) => {
   try {
@@ -294,9 +330,7 @@ app.post("/api/otp/submit", async (c) => {
     const body = await c.req.json<{ code?: string }>();
     const code = String(body.code ?? "").trim();
 
-    if (!code) {
-      return c.json({ error: "code is required" }, 400);
-    }
+    if (!code) return c.json({ error: "code is required" }, 400);
 
     if (!isOtpPending()) {
       return c.json(
@@ -307,10 +341,7 @@ app.post("/api/otp/submit", async (c) => {
 
     const accepted = submitOtpCode(code);
     if (!accepted) {
-      return c.json(
-        { success: false, error: "Failed to submit OTP" },
-        400,
-      );
+      return c.json({ success: false, error: "Failed to submit OTP" }, 400);
     }
 
     return c.json({ success: true, message: "OTP submitted" });
@@ -340,18 +371,16 @@ app.post("/api/commands/save", async (c) => {
         );
       }
 
-      const aliases = Array.isArray(row.aliases) ? row.aliases : [];
-      const filterKeywords = Array.isArray(row.filterKeywords)
-        ? row.filterKeywords
-        : [];
-
       sanitizedRows.push({
         command,
-        aliases: aliases
-          .map((value) => String(value).trim().toLowerCase())
+        aliases: (Array.isArray(row.aliases) ? row.aliases : [])
+          .map((v) => String(v).trim().toLowerCase())
           .filter(Boolean),
-        filterKeywords: filterKeywords
-          .map((value) => String(value).trim().toLowerCase())
+        filterKeywords: (Array.isArray(row.filterKeywords)
+          ? row.filterKeywords
+          : []
+        )
+          .map((v) => String(v).trim().toLowerCase())
           .filter(Boolean),
         isEnabled: Boolean(row.isEnabled),
         handlerName: String(row.handlerName ?? ""),
@@ -372,18 +401,11 @@ app.post("/api/commands/execute", async (c) => {
     const chatId = String(body.chatId ?? "").trim();
     const rawCommand = String(body.command ?? "").trim();
 
-    if (!chatId) {
-      return c.json({ error: "chatId is required" }, 400);
-    }
-
-    if (!rawCommand) {
-      return c.json({ error: "command is required" }, 400);
-    }
+    if (!chatId) return c.json({ error: "chatId is required" }, 400);
+    if (!rawCommand) return c.json({ error: "command is required" }, 400);
 
     const classified = await classifyCommand(rawCommand);
-    if (!classified) {
-      return c.json({ error: "No matching command found" }, 400);
-    }
+    if (!classified) return c.json({ error: "No matching command found" }, 400);
 
     const latest = getLatestMessages(chatId, 1, true);
     const targetMessage = latest[latest.length - 1];
@@ -458,11 +480,190 @@ app.post("/api/commands/execute", async (c) => {
       );
     }
 
-    return c.json({
-      success: true,
-      classifiedCommand: classified,
-      resultText,
+    return c.json({ success: true, classifiedCommand: classified, resultText });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
+// Shell execution API
+
+app.get("/api/shell/cwd", (c) => {
+  return c.json({ cwd: SERVER_CWD });
+});
+
+app.post("/api/shell/exec", async (c) => {
+  try {
+    const body = await c.req.json<{ command?: string; cwd?: string }>();
+    const command = String(body.command ?? "").trim();
+    if (!command) return c.json({ error: "command is required" }, 400);
+
+    const cwd = body.cwd?.trim() || SERVER_CWD;
+    const sessionId = crypto.randomUUID();
+
+    const child = spawn(command, {
+      shell: "/bin/bash",
+      cwd,
+      env: { ...process.env, TERM: "dumb", COLUMNS: "200", LINES: "50" },
+      stdio: ["pipe", "pipe", "pipe"],
+      detached: true,
     });
+
+    const session: ShellSession = {
+      id: sessionId,
+      process: child,
+      cwd,
+      command,
+      startedAt: Date.now(),
+      exited: false,
+      exitCode: null,
+      outputBuffer: [],
+      subscribers: new Set(),
+    };
+
+    shellSessions.set(sessionId, session);
+
+    const pushEntry = (entry: OutputEntry) => {
+      session.outputBuffer.push(entry);
+      for (const sub of session.subscribers) {
+        try {
+          sub(entry);
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      pushEntry({ type: "stdout", data: chunk.toString("utf-8") });
+    });
+
+    child.stderr?.on("data", (chunk: Buffer) => {
+      pushEntry({ type: "stderr", data: chunk.toString("utf-8") });
+    });
+
+    child.on("exit", (code) => {
+      session.exited = true;
+      session.exitCode = code;
+      pushEntry({ type: "exit", code: code ?? -1 });
+      // Clean up after 60s so late-connecting streams can still replay
+      setTimeout(() => shellSessions.delete(sessionId), 60_000);
+    });
+
+    child.on("error", (err) => {
+      logger.warn("Shell process error", {
+        sessionId,
+        command,
+        error: err.message,
+      });
+      if (!session.exited) {
+        session.exited = true;
+        session.exitCode = -1;
+        pushEntry({ type: "exit", code: -1 });
+      }
+    });
+
+    return c.json({ sessionId, cwd });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
+app.get("/api/shell/stream/:sessionId", (c) => {
+  const sessionId = c.req.param("sessionId");
+  const session = shellSessions.get(sessionId);
+
+  if (!session) {
+    return c.json({ error: "Session not found" }, 404);
+  }
+
+  const { readable, writable } = new TransformStream<Uint8Array>();
+  const writer = writable.getWriter();
+  const encoder = new TextEncoder();
+  let closed = false;
+
+  const send = (payload: OutputEntry) => {
+    if (closed) return;
+    const data = `data: ${JSON.stringify(payload)}\n\n`;
+    writer.write(encoder.encode(data)).catch(() => cleanup());
+  };
+
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    session.subscribers.delete(send);
+    writer.close().catch(() => {});
+  };
+
+  // Register as a live subscriber BEFORE replaying buffer
+  session.subscribers.add(send);
+
+  // Replay all buffered output in order
+  for (const entry of session.outputBuffer) {
+    send(entry);
+  }
+
+  // If already exited and we replayed all output including exit, unsubscribe soon
+  if (session.exited) {
+    setTimeout(cleanup, 500);
+  }
+
+  c.req.raw.signal.addEventListener("abort", cleanup);
+
+  return new Response(readable, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    },
+  });
+});
+
+app.post("/api/shell/stdin", async (c) => {
+  try {
+    const body = await c.req.json<{ sessionId?: string; input?: string }>();
+    const sessionId = String(body.sessionId ?? "").trim();
+    const input = String(body.input ?? "");
+
+    if (!sessionId) return c.json({ error: "sessionId is required" }, 400);
+
+    const session = shellSessions.get(sessionId);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    if (session.exited)
+      return c.json({ error: "Process has already exited" }, 400);
+
+    if (!session.process.stdin || session.process.stdin.destroyed) {
+      return c.json({ error: "stdin is not available" }, 400);
+    }
+
+    session.process.stdin.write(input);
+    return c.json({ success: true });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
+app.post("/api/shell/kill", async (c) => {
+  try {
+    const body = await c.req.json<{ sessionId?: string; signal?: string }>();
+    const sessionId = String(body.sessionId ?? "").trim();
+
+    if (!sessionId) return c.json({ error: "sessionId is required" }, 400);
+
+    const session = shellSessions.get(sessionId);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    if (session.exited) return c.json({ success: true, alreadyExited: true });
+
+    const sig = (body.signal || "SIGINT") as NodeJS.Signals;
+    try {
+      // Kill the entire process group (covers child processes too)
+      process.kill(-session.process.pid!, sig);
+    } catch {
+      session.process.kill(sig);
+    }
+
+    return c.json({ success: true });
   } catch (err) {
     return c.json({ error: (err as Error).message }, 500);
   }
@@ -474,7 +675,7 @@ export function startServer(): void {
   serve({
     fetch: app.fetch,
     port: process.env.PORT ? Number(process.env.PORT) : 7860,
-    hostname: "0.0.0.0"
+    hostname: "0.0.0.0",
   });
   logger.info(
     `Dashboard running → http://localhost:${process.env.PORT ?? 7860}`,

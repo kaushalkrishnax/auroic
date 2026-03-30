@@ -46,10 +46,7 @@ function buildGenerateEndpoints(host: string): string[] {
     return [normalized];
   }
 
-  return [
-    `${normalized}/api/generate`,
-    `${normalized}/ollama/api/generate`,
-  ];
+  return [`${normalized}/api/generate`, `${normalized}/ollama/api/generate`];
 }
 
 async function generateViaHttpFallback(
@@ -267,10 +264,7 @@ export async function invokeRouter(
     const ollama = getOllamaClient(host);
 
     const prompt = buildPrompt(formattedWindow, think);
-    const generationOptions = buildGenerationOptions(
-      config.router.options,
-      {},
-    );
+    const generationOptions = buildGenerationOptions(config.router.options, {});
 
     let raw: string;
     try {

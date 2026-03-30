@@ -22,7 +22,8 @@ type SQLiteConnection = {
 };
 
 const require = createRequire(import.meta.url);
-const isBunRuntime = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
+const isBunRuntime =
+  typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
 
 let _db: DrizzleDB | null = null;
 let _sqlite: SQLiteConnection | null = null;
@@ -54,7 +55,10 @@ export function initDB(dbPath: string): DrizzleDB {
 
   if (isBunRuntime) {
     const { drizzle } = require("drizzle-orm/bun-sqlite") as {
-      drizzle: (sqlite: SQLiteConnection, options: { schema: typeof schema }) => DrizzleDB;
+      drizzle: (
+        sqlite: SQLiteConnection,
+        options: { schema: typeof schema },
+      ) => DrizzleDB;
     };
     const { migrate } = require("drizzle-orm/bun-sqlite/migrator") as {
       migrate: (db: DrizzleDB, options: { migrationsFolder: string }) => void;
@@ -64,7 +68,10 @@ export function initDB(dbPath: string): DrizzleDB {
     migrate(_db, { migrationsFolder: "./drizzle" });
   } else {
     const { drizzle } = require("drizzle-orm/better-sqlite3") as {
-      drizzle: (sqlite: SQLiteConnection, options: { schema: typeof schema }) => DrizzleDB;
+      drizzle: (
+        sqlite: SQLiteConnection,
+        options: { schema: typeof schema },
+      ) => DrizzleDB;
     };
     const { migrate } = require("drizzle-orm/better-sqlite3/migrator") as {
       migrate: (db: DrizzleDB, options: { migrationsFolder: string }) => void;

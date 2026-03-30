@@ -1,6 +1,10 @@
 import { eq, desc, sql } from "drizzle-orm";
 import { getDB } from "@/db/index.js";
-import { messages, conversations, conversationParticipants } from "@/db/schema.js";
+import {
+  messages,
+  conversations,
+  conversationParticipants,
+} from "@/db/schema.js";
 import type {
   SelectConversation,
   SelectConversationParticipant,

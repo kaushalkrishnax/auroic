@@ -17,7 +17,8 @@ type SQLiteConnection = {
 };
 
 const require = createRequire(import.meta.url);
-const isBunRuntime = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
+const isBunRuntime =
+  typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
 
 let _db: ConfigDrizzleDB | null = null;
 let _sqlite: SQLiteConnection | null = null;
