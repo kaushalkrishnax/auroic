@@ -120,7 +120,7 @@ export const COMMAND_REGISTRY: CommandDefinition[] = [
     handlerName: "sendVoiceNote",
     actionType: "media",
     description: "Record and send a voice note",
-    commandWords: ["voice", "speak"],
+    commandWords: ["voice", "speak", "say"],
     handler: commandHandlers.sendVoiceNote,
   },
   {

@@ -138,25 +138,3 @@ export async function generateSpeechBuffer(
 
   return Buffer.from(arrayBuffer);
 }
-
-export function playBuffer(buffer: Buffer) {
-  const proc = spawn("pw-play", ["--target=tts_sink", "-"], {
-    stdio: ["pipe", "ignore", "ignore"],
-  });
-
-  proc.on("error", (err) => {
-    logger.warn("Audio playback failed", {
-      error: err.message,
-    });
-  });
-
-  proc.stdin?.on("error", (err) => {
-    logger.warn("Audio playback stdin failed", {
-      error: err.message,
-    });
-  });
-
-  proc.stdin?.end(buffer);
-
-  return proc;
-}

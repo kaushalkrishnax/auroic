@@ -5,14 +5,13 @@
 
 import type { Locator, Page } from "playwright-core";
 import { find } from "node-emoji";
-import { parseBuffer } from "music-metadata";
 import { getPage } from "@/automation/session.js";
 import { getConversationById } from "@/db/queries/conversations.js";
 import { getLatestMessages, getMessageByMid } from "@/db/queries/messages.js";
 import SELECTORS from "@/instagram/selectors.js";
 import logger from "@/utils/logger.js";
 import { sleep } from "@/utils/delay.js";
-import { generateSpeechBuffer, playBuffer } from "@/runtime/tts.js";
+import { generateSpeechBuffer } from "@/runtime/tts.js";
 
 const TARGET_MAX_AGE_MS = 20_000;
 
@@ -979,43 +978,96 @@ export async function sendVoiceNote(
 ): Promise<boolean> {
   try {
     const page = getPage();
-    const replyReady = await selectToReply(chatId, targetMid);
-    if (targetMid && !replyReady) return false;
-
-    const composer = page.locator(SELECTORS.messageComposer).first();
-    if (!(await visible(composer))) {
-      logger.warn("Message composer not found");
-      return false;
-    }
-
-    const micBtn = composer.locator(SELECTORS.voiceNoteButton).first();
-    const sendBtn = composer.locator(SELECTORS.sendVoiceNoteButton).first();
 
     const buffer = await generateSpeechBuffer(text);
 
-    const metadata = await parseBuffer(buffer);
-    const durationMs = Math.ceil((metadata.format.duration || 2) * 1000) + 300;
+    // STEP 1: Inject fresh audio system every time
+    await page.evaluate(async (audioData) => {
+      const win = window as any;
 
-    if (!(await click(micBtn))) {
-      logger.warn("Failed to click voice note button");
-      return false;
-    }
+      // Kill old context completely
+      if (win.audioContext) {
+        try {
+          await win.audioContext.close();
+        } catch {}
+      }
 
-    await page.waitForTimeout(200);
+      // Create fresh context
+      win.audioContext = new (
+        window.AudioContext || (window as any).webkitAudioContext
+      )();
 
-    playBuffer(buffer);
+      // Fresh destination (critical)
+      win.mixedDestination =
+        win.audioContext.createMediaStreamDestination();
 
-    await page.waitForTimeout(durationMs);
+      // Override mic every time (critical)
+      navigator.mediaDevices.getUserMedia = async (constraints) => {
+        if (constraints && constraints.audio) {
+          return win.mixedDestination.stream;
+        }
+        return null;
+      };
 
-    if (!(await click(sendBtn))) {
-      logger.warn("Failed to click voice note button to stop recording");
-      return false;
-    }
+      await win.audioContext.resume();
 
-    logger.info("Voice note sent", { text, reply: !!targetMid });
+      // Decode audio
+      const arrayBuffer = Uint8Array.from(audioData).buffer;
+
+      win.currentAudioBuffer =
+        await win.audioContext.decodeAudioData(arrayBuffer);
+    }, Array.from(buffer));
+
+    // STEP 2: Select chat / reply target
+    await selectToReply(chatId, targetMid);
+
+    const composer = page.locator(SELECTORS.messageComposer).first();
+    const micBtn = composer.locator(SELECTORS.voiceNoteButton).first();
+    const sendBtn = composer.locator(SELECTORS.sendVoiceNoteButton).first();
+
+    // IMPORTANT: small delay before mic click (Instagram needs it)
+    await page.waitForTimeout(300);
+
+    if (!(await click(micBtn))) return false;
+
+    await page.waitForTimeout(500);
+
+    // STEP 3: Play audio into fake mic stream
+    const durationSec = await page.evaluate(async () => {
+      const win = window as any;
+
+      const source = win.audioContext.createBufferSource();
+      const gain = win.audioContext.createGain();
+
+      gain.gain.value = 1;
+
+      source.buffer = win.currentAudioBuffer;
+
+      // Proper chain
+      source.connect(gain);
+      gain.connect(win.mixedDestination);
+
+      source.start(0);
+
+      return source.buffer.duration;
+    });
+
+    // Wait for playback to finish
+    await page.waitForTimeout(durationSec * 1000 + 200);
+
+    // STEP 4: Send voice note
+    if (!(await click(sendBtn))) return false;
+
+    // Cleanup
+    await page.evaluate(() => {
+      const win = window as any;
+      win.currentAudioBuffer = null;
+    });
+
+    logger.info("Voice note sent successfully");
     return true;
-  } catch (err) {
-    logger.warn("Send voice note failed", { error: (err as Error).message });
+  } catch (err: any) {
+    logger.warn("Send voice note failed", { error: err.message });
     return false;
   }
 }
