@@ -40,7 +40,7 @@ fi
 # ---------------------------
 if [ ! -f "$KOKORO_MODEL_PATH" ]; then
   echo "Downloading Kokoro TTS model..."
-  mkdir -p /app/models/kokoro-tts
+  mkdir -p /app/models/kokoro-tts/onnx
 
   curl -L "https://huggingface.co/onnx-community/Kokoro-82M-ONNX/resolve/main/model_quantized.onnx?download=true" \
     -o "$KOKORO_MODEL_PATH"
