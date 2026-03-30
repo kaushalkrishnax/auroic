@@ -1,6 +1,5 @@
 node_modules
 data
-models
 .env
 *.log
 .git
