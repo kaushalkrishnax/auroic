@@ -17,21 +17,28 @@ export async function generateReply(
 ): Promise<string> {
   const config = getConfig();
   const model = resolveModel(effort);
-  const systemPrompt = config.llm.systemPrompt;
 
-  const h = [...history];
-  while (h.length < 20) h.unshift("...");
+  const recentHistory = history
+    .slice(-10)
+    .map((msg) => msg.replace(/@BOT/gi, "").trim())
+    .filter(Boolean)
+    .join("\n");
 
-  const historyText = h.map((msg, i) => `Msg ${i + 1}: ${msg}`).join("\n");
-  const targetText = candidates[0] ?? "";
+  const target = (candidates[0] ?? "").replace(/@BOT/gi, "").trim();
 
-  const contextPrompt = `Here are the last 20 messages from the conversation:\n\n${historyText}\n\n---\n\nTarget message to reply to:\n${targetText}`;
+  const contextPrompt = [
+    recentHistory && `Recent conversation:\n${recentHistory}`,
+    `Reply to: ${target}`,
+    "Reply naturally. Do not start your reply with any tag, label, or prefix.",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 
   const messages: ChatMessage[] = [
-    { role: "system", content: systemPrompt },
+    { role: "system", content: config.llm.systemPrompt },
     { role: "user", content: contextPrompt },
   ];
 
-  logger.info("LLM generate", { model, effort });
-  return chatCompletion(messages, model);
+  const reply = await chatCompletion(messages, model);
+  return reply.replace(/@BOT/gi, "").trim();
 }

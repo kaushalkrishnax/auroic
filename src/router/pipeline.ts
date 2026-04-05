@@ -252,9 +252,6 @@ function getCandidateContent(
 
   const conversation = getConversationById(chatId);
   if (conversation && !conversation.isGroup) {
-      if (!text.toUpperCase().includes("@BOT")) {
-          text = `${text} @BOT`;
-      }
       isDirectMention = true;
   }
 
@@ -573,7 +570,7 @@ async function processPassiveBatch(chatId: string): Promise<void> {
 
     appendHistoryPair(
       state,
-      targetCandidate.textContent ?? "",
+      (targetCandidate.textContent ?? "").replace(/@BOT/gi, "").trim(),
       resultText ?? `[${decision.type}]`,
     );
   } finally {
@@ -770,7 +767,7 @@ async function processCandidates(chatId: string): Promise<void> {
 
         appendHistoryPair(
           state,
-          candidate.content,
+          candidate.content.replace(/@BOT/gi, "").trim(),
           resultText ?? `[${decision.type}]`,
         );
 
