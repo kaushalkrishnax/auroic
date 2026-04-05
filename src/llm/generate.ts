@@ -5,7 +5,6 @@
  */
 
 import getConfig from "@/runtime/index.js";
-import logger from "@/utils/logger.js";
 import { chatCompletion, resolveModel } from "@/llm/client.js";
 import type { ChatMessage } from "@/llm/client.js";
 import type { EffortLevel } from "@/types/index.js";

@@ -751,21 +751,15 @@ export async function sendText(
   text: string,
   chatId: string,
   targetMid?: string,
-  options: { appendBotTag?: boolean } = {},
 ): Promise<boolean> {
   try {
     const page = getPage();
-    const conversation = getConversationById(chatId);
     const trimmedText = text.trim();
-    const shouldAppendBotTag = options.appendBotTag ?? true;
-    const outgoingText = !shouldAppendBotTag
-      ? trimmedText
-      : conversation?.isGroup === true ||
-          trimmedText.toUpperCase().endsWith("@BOT")
-        ? text
-        : trimmedText.length
-          ? `${trimmedText} @BOT`
-          : "@BOT";
+
+    if (!trimmedText) {
+      logger.warn("Skipping text send: empty message", { chatId });
+      return false;
+    }
 
     const replyReady = await selectToReply(chatId, targetMid);
     if (targetMid && !replyReady) {
@@ -784,13 +778,12 @@ export async function sendText(
     }
 
     await input.click();
-    await input.fill(outgoingText);
+    await input.fill(trimmedText);
     await input.press("Enter");
 
     logger.info("Text message sent", {
-      length: outgoingText.length,
+      length: trimmedText.length,
       reply: !!targetMid,
-      botTagAttached: shouldAppendBotTag && conversation?.isGroup !== true,
     });
     return true;
   } catch (err) {

@@ -252,6 +252,9 @@ function getCandidateContent(
 
   const conversation = getConversationById(chatId);
   if (conversation && !conversation.isGroup) {
+      if (!text.toUpperCase().includes("@BOT")) {
+          text = `@BOT ${text}`;
+      }
       isDirectMention = true;
   }
 
@@ -273,8 +276,7 @@ function getCandidateContent(
 }
 
 function resolveTargetCandidateIndex(
-  target: string | null,
-  candidateCount: number,
+  target: string | null
 ): number | null {
   if (!target) return null;
   const match = target.match(/^C(\d+)$/i);
@@ -454,8 +456,7 @@ async function processPassiveBatch(chatId: string): Promise<void> {
     }
 
     const targetIndex = resolveTargetCandidateIndex(
-      decision.target,
-      slotToCandidateIndex.length,
+      decision.target
     );
 
     if (
