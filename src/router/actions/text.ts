@@ -29,10 +29,16 @@ export async function executeText(
     ? [targetTextContent]
     : candidates;
 
+  const cleanGeneratorCandidates = generatorCandidates.map((c) =>
+    c.replace(/@BOT/gi, "").trim(),
+  );
+
+  const cleanHistory = history.map((h) => h.replace(/@BOT/gi, "").trim());
+
   try {
     const replyText = await generateReply(
-      history,
-      generatorCandidates,
+      cleanHistory,
+      cleanGeneratorCandidates,
       decision.effort,
     );
 

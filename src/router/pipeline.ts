@@ -12,6 +12,7 @@
 
 import { getMessageByMid, getLatestMessages } from "@/db/queries/messages.js";
 import { insertOutgoing } from "@/db/queries/outgoing.js";
+import { getConversationById } from "@/db/queries/conversations.js";
 import { attachDataMidToDOM, stampInitialDataMids } from "@/automation/chat.js";
 import { initInstagramSession } from "@/automation/session.js";
 import { navigateToChat } from "@/automation/navigation.js";
@@ -241,6 +242,7 @@ function trackPassiveMessage(chatId: string, mid: string): void {
 function getCandidateContent(
   msg: Message,
   botId: string,
+  chatId: string
 ): CandidateContentResult {
   const config = getConfig();
   const trigger = detectTrigger(msg.textContent ?? "", config);
@@ -248,10 +250,20 @@ function getCandidateContent(
   let text = msg.textContent ?? "";
   let isDirectMention = trigger.triggered;
 
+  const conversation = getConversationById(chatId);
+  if (conversation && !conversation.isGroup) {
+      if (!text.toUpperCase().includes("@BOT")) {
+          text = `${text} @BOT`;
+      }
+      isDirectMention = true;
+  }
+
   if (msg.replyToMessageId) {
     const repliedTo = getMessageByMid(msg.replyToMessageId);
     if (repliedTo?.userId === botId) {
-      text = `@BOT ${text}`;
+      if (!text.toUpperCase().includes("@BOT")) {
+        text = `@BOT ${text}`;
+      }
       isDirectMention = true;
     }
   }
@@ -818,6 +830,7 @@ export async function processMessage(
     const { content: candidateText, isDirectMention } = getCandidateContent(
       msg as Message,
       botId,
+      chatId,
     );
 
     if (!isDirectMention) {
