@@ -1,32 +1,30 @@
-# Stage 1: Build
+# Stage 1: Build the application
 FROM node:20-slim AS builder
 
 WORKDIR /app
 
+ENV PLAYWRIGHT_BROWSERS_PATH=/app/ms-playwright
+
 COPY package.json package-lock.json* ./
 RUN npm ci
 
-# Install Playwright browsers in SAME env
-RUN npx playwright install --with-deps chromium-headless-shell
+RUN npx playwright install chromium-headless-shell
 
 COPY tsconfig.json ./
 COPY src ./src
 COPY drizzle ./drizzle
 COPY scripts/start.sh ./start.sh
 
-RUN chmod +x start.sh
-RUN npm run build
-RUN npm prune --omit=dev
+RUN chmod +x start.sh && npm run build && npm prune --omit=dev
 
-
-# Stage 2: Runtime
+# Stage 2: Create the final image
 FROM node:20-slim
 
 WORKDIR /app
 
 ENV NODE_ENV=production
 ENV PORT=7860
-ENV PLAYWRIGHT_BROWSERS_PATH=/app/data/ms-playwright
+ENV PLAYWRIGHT_BROWSERS_PATH=/app/ms-playwright
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -38,14 +36,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pipewire-pulse \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -fsSL https://ollama.com/install.sh | sh
-
 COPY --from=builder /app /app
 
-RUN mkdir -p /app/data \
-    && chown -R node:node /app
+RUN npx playwright install-deps chromium-headless-shell \
+    && rm -rf /var/lib/apt/lists/*
 
-VOLUME ["/app/data"]
+RUN curl -fsSL https://ollama.com/install.sh | sh
+
+RUN mkdir -p /data/app \
+    && chown -R node:node /app \
+    && chown -R node:node /data
+
+VOLUME ["/data/app"]
 
 USER node
 
