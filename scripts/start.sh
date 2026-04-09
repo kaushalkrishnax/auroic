@@ -1,6 +1,11 @@
 #!/bin/bash
 set -e
 
+export DB_PATH=/data/app/state.db
+export CONFIG_DB_PATH=/data/app/config.db
+export CHROMIUM_PROFILE_DIR=/data/app/chrome-auroic
+export PORT=7860
+
 MODEL_PATH=/app/models/auroic-router/auroic-router-0.6b.q8_0.gguf
 MODELFILE_PATH=/app/models/auroic-router/Modelfile
 KOKORO_MODEL_PATH=/app/models/kokoro-tts/onnx/model_quantized.onnx
