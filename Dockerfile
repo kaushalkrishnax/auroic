@@ -28,7 +28,7 @@ WORKDIR /app
 # ENV
 ENV NODE_ENV=production
 ENV PORT=7860
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV PLAYWRIGHT_BROWSERS_PATH=/data/ms-playwright
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 # Install system dependencies
@@ -64,7 +64,7 @@ COPY drizzle ./drizzle
 # Create persistent data directory
 RUN mkdir -p /app/data \
     && chown -R node:node /app \
-    && chown -R node:node /ms-playwright
+    && chown -R node:node /data/ms-playwright
 
 VOLUME ["/app/data"]
 

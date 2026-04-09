@@ -34,17 +34,31 @@ import crypto from "crypto";
 import logger from "@/utils/logger.js";
 import { eventBus } from "@/events.js";
 import { BOT_FBID, reloadConfig } from "@/runtime/index.js";
-import { classifyCommand } from "@/command/command.js";
+import {
+  disconnectBrowser,
+  initInstagramSession,
+} from "@/automation/session.js";
+import { runWithAutomationLock } from "@/automation/executionLock.js";
+import {
+  beginBrowserReload,
+  endBrowserReload,
+  getSystemControlState,
+  pauseSystem,
+  resumeSystem,
+} from "@/runtime/systemControl.js";
+import { classifyCommand, hasCommandTriggerKeyword } from "@/command/command.js";
 import { getAllConversations } from "@/db/queries/conversations.js";
 import { getLatestMessages } from "@/db/queries/messages.js";
 import { getAllMessages } from "@/db/queries/messages.js";
 import { getAllUsers } from "@/db/queries/users.js";
-import { getAllMedia } from "@/db/queries/media.js";
+import { getAllMedia, getMediaForMessages } from "@/db/queries/media.js";
 import { getAllReactions } from "@/db/queries/reactions.js";
 import { getAllOutgoing } from "@/db/queries/outgoing.js";
 import { insertOutgoing } from "@/db/queries/outgoing.js";
 import { COMMAND_REGISTRY } from "@/command/commandRegistry.js";
 import { executeAction } from "@/router/dispatcher.js";
+import { sendText } from "@/automation/chat.js";
+import { navigateToChat } from "@/automation/navigation.js";
 import { emitEvent } from "@/events.js";
 import {
   getOtpPendingRequestedAt,
@@ -232,7 +246,22 @@ app.get("/api/conversations/:id/messages", (c) => {
   try {
     const chatId = c.req.param("id");
     const limit = Number(c.req.query("limit") ?? 100);
-    return c.json(getAllMessages(chatId, limit));
+    const rows = getAllMessages(chatId, limit);
+    const mediaRows = getMediaForMessages(rows.map((row) => row.messageId));
+    const mediaByMessageId = new Map<string, typeof mediaRows>();
+
+    for (const mediaRow of mediaRows) {
+      const bucket = mediaByMessageId.get(mediaRow.messageId) ?? [];
+      bucket.push(mediaRow);
+      mediaByMessageId.set(mediaRow.messageId, bucket);
+    }
+
+    return c.json(
+      rows.map((row) => ({
+        ...row,
+        media: mediaByMessageId.get(row.messageId) ?? [],
+      })),
+    );
   } catch (err) {
     return c.json({ error: (err as Error).message }, 500);
   }
@@ -350,6 +379,75 @@ app.post("/api/otp/submit", async (c) => {
   }
 });
 
+app.get("/api/system/status", (c) => {
+  try {
+    return c.json(getSystemControlState());
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
+app.post("/api/system/control", async (c) => {
+  try {
+    const body = await c.req.json<{ action?: string }>();
+    const action = String(body.action ?? "").trim().toLowerCase();
+
+    if (!action) return c.json({ error: "action is required" }, 400);
+
+    if (action === "pause") {
+      const changed = pauseSystem("dashboard");
+      return c.json({
+        success: true,
+        changed,
+        state: getSystemControlState(),
+        message: changed ? "System paused" : "System already paused",
+      });
+    }
+
+    if (action === "resume") {
+      const changed = resumeSystem("dashboard");
+      return c.json({
+        success: true,
+        changed,
+        state: getSystemControlState(),
+        message: changed ? "System resumed" : "System already running",
+      });
+    }
+
+    if (action === "reload-browser" || action === "restart") {
+      const started = beginBrowserReload("dashboard");
+      if (!started) {
+        return c.json({
+          success: false,
+          state: getSystemControlState(),
+          message: "Browser reload is already in progress",
+        });
+      }
+
+      try {
+        await runWithAutomationLock("reload-browser", "system", async () => {
+          await disconnectBrowser();
+          await initInstagramSession();
+        });
+        endBrowserReload("dashboard", true);
+      } catch (reloadErr) {
+        endBrowserReload("dashboard", false);
+        throw reloadErr;
+      }
+
+      return c.json({
+        success: true,
+        state: getSystemControlState(),
+        message: "Browser reloaded",
+      });
+    }
+
+    return c.json({ error: `Unsupported action: ${action}` }, 400);
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
 app.post("/api/commands/save", async (c) => {
   try {
     const body = await c.req.json<{ commands: CommandConfigRow[] }>();
@@ -397,15 +495,63 @@ app.post("/api/commands/save", async (c) => {
 
 app.post("/api/commands/execute", async (c) => {
   try {
-    const body = await c.req.json<{ chatId?: string; command?: string }>();
+    const body = await c.req.json<{
+      chatId?: string;
+      command?: string;
+      input?: string;
+    }>();
     const chatId = String(body.chatId ?? "").trim();
-    const rawCommand = String(body.command ?? "").trim();
+    const rawInput = String(body.input ?? body.command ?? "").trim();
 
     if (!chatId) return c.json({ error: "chatId is required" }, 400);
-    if (!rawCommand) return c.json({ error: "command is required" }, 400);
+    if (!rawInput) return c.json({ error: "input is required" }, 400);
 
-    const classified = await classifyCommand(rawCommand);
-    if (!classified) return c.json({ error: "No matching command found" }, 400);
+    const canBeCommand = await hasCommandTriggerKeyword(rawInput);
+    const classified = canBeCommand ? await classifyCommand(rawInput) : null;
+
+    if (!classified) {
+      const sent = await runWithAutomationLock(
+        "dashboard-send-text",
+        chatId,
+        async () => {
+          await initInstagramSession();
+          await navigateToChat(chatId);
+          return sendText(rawInput, chatId);
+        },
+      );
+
+      insertOutgoing({
+        conversationId: chatId,
+        targetMessageId: null,
+        actionType: "text",
+        effortLevel: null,
+        intentLabel: "dashboard-manual-text",
+        messageContent: rawInput,
+        executionStatus: sent ? "sent" : "failed",
+        platformMessageId: null,
+        executionError: sent ? null : "Failed to send dashboard text",
+      });
+
+      if (!sent) {
+        return c.json(
+          {
+            success: false,
+            mode: "text",
+            error: "Failed to send text",
+          },
+          500,
+        );
+      }
+
+      emitEvent({
+        type: "OUTGOING",
+        chatId,
+        actionType: "text",
+        content: rawInput,
+      });
+
+      return c.json({ success: true, mode: "text", resultText: rawInput });
+    }
 
     const latest = getLatestMessages(chatId, 1, true);
     const targetMessage = latest[latest.length - 1];
@@ -429,7 +575,7 @@ app.post("/api/commands/execute", async (c) => {
       chatId,
       message: targetMessage as Message,
       history: [],
-      candidates: [rawCommand],
+      candidates: [rawInput],
       decision,
       targetMessageId: targetMessage.messageId,
       targetTextContent: targetMessage.textContent,
@@ -473,6 +619,7 @@ app.post("/api/commands/execute", async (c) => {
       return c.json(
         {
           success: false,
+          mode: "command",
           classifiedCommand: classified,
           error: executionError || "Command execution failed",
         },
@@ -480,7 +627,12 @@ app.post("/api/commands/execute", async (c) => {
       );
     }
 
-    return c.json({ success: true, classifiedCommand: classified, resultText });
+    return c.json({
+      success: true,
+      mode: "command",
+      classifiedCommand: classified,
+      resultText,
+    });
   } catch (err) {
     return c.json({ error: (err as Error).message }, 500);
   }

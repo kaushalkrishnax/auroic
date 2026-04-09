@@ -1,4 +1,4 @@
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, inArray } from "drizzle-orm";
 import { getDB } from "@/db/index.js";
 import { media } from "@/db/schema.js";
 import type { SelectMedia, InsertMedia } from "@/db/schema.js";
@@ -33,6 +33,19 @@ export function getMediaForMessage(messageId: string): SelectMedia[] {
     .select()
     .from(media)
     .where(eq(media.messageId, messageId))
+    .all();
+}
+
+export function getMediaForMessages(messageIds: string[]): SelectMedia[] {
+  const normalizedIds = [...new Set(messageIds.map((id) => id.trim()))].filter(
+    Boolean,
+  );
+  if (!normalizedIds.length) return [];
+
+  return getDB()
+    .select()
+    .from(media)
+    .where(inArray(media.messageId, normalizedIds))
     .all();
 }
 

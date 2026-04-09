@@ -9,7 +9,7 @@
  */
 
 import { insertIncomingMessage } from "@/db/queries/messages.js";
-import { insertMedia } from "@/db/queries/media.js";
+import { getMediaForMessage, insertMedia } from "@/db/queries/media.js";
 import { editMessage } from "@/db/queries/messages.js";
 import { markMessageDeleted } from "@/db/queries/messages.js";
 import { insertReaction } from "@/db/queries/reactions.js";
@@ -27,11 +27,84 @@ import type { RawIGMessage, RawIGThread } from "@/types/index.js";
 
 // Media parsing
 
+function pickString(
+  obj: Record<string, unknown> | undefined,
+  keys: string[],
+): string | null {
+  if (!obj) return null;
+  for (const key of keys) {
+    const value = obj[key];
+    if (typeof value === "string" && value.trim()) return value;
+  }
+  return null;
+}
+
+function pickNumber(
+  obj: Record<string, unknown> | undefined,
+  keys: string[],
+): number | null {
+  if (!obj) return null;
+  for (const key of keys) {
+    const value = obj[key];
+    if (typeof value === "number") return value;
+    if (typeof value === "string" && value.trim()) {
+      const parsed = Number(value);
+      if (!Number.isNaN(parsed)) return parsed;
+    }
+  }
+  return null;
+}
+
 function parseMedia(msg: RawIGMessage): void {
   const content = msg.content as Record<string, unknown> | undefined;
   if (!content) return;
 
   const type = content.__typename as string | undefined;
+  const messageType = String(msg.content_type ?? "").toUpperCase();
+
+  const parseMusicStickerXma = () => {
+    const xma = content.xma as Record<string, unknown> | undefined;
+    const music = content.music as Record<string, unknown> | undefined;
+    const previewImage =
+      (xma?.preview_image as Record<string, unknown> | undefined) ??
+      (music?.preview_image as Record<string, unknown> | undefined);
+
+    const previewUrl =
+      (previewImage?.url as string | null) ??
+      (content.preview_url as string | null) ??
+      (content.cover_art_url as string | null) ??
+      (content.thumbnail_url as string | null) ??
+      (xma?.preview_url as string | null) ??
+      (music?.cover_art_url as string | null) ??
+      null;
+
+    const targetUrl =
+      (xma?.target_url as string | null) ??
+      (content.target_url as string | null) ??
+      (content.url as string | null) ??
+      null;
+
+    const width =
+      (previewImage?.width as number | null) ??
+      (content.preview_width as number | null) ??
+      (content.width as number | null) ??
+      null;
+
+    const height =
+      (previewImage?.height as number | null) ??
+      (content.preview_height as number | null) ??
+      (content.height as number | null) ??
+      null;
+
+    insertMedia({
+      messageId: msg.id,
+      attachmentType: "MUSIC_STICKER_XMA",
+      url: targetUrl,
+      previewUrl,
+      width,
+      height,
+    });
+  };
 
   switch (type) {
     case "SlideMessageImageContent": {
@@ -82,13 +155,30 @@ function parseMedia(msg: RawIGMessage): void {
     case "SlideMessageAnimatedMediaContent": {
       const gifs = (content.animated_media as Record<string, unknown>[]) ?? [];
       for (const g of gifs) {
+        const url =
+          pickString(g, [
+            "attachment_mp4_url",
+            "attachment_cdn_url",
+            "attachment_url",
+            "media_url",
+            "url",
+          ]) ?? null;
+        const previewUrl =
+          pickString(g, [
+            "preview_cdn_url",
+            "preview_url",
+            "image_url",
+            "thumbnail_url",
+            "url",
+          ]) ?? null;
+
         insertMedia({
           messageId: msg.id,
           attachmentType: (g.is_sticker as boolean) ? "STICKER_GIF" : "GIF",
-          url: g.attachment_mp4_url as string | null,
-          previewUrl: g.preview_cdn_url as string | null,
-          width: g.preview_width as number | null,
-          height: g.preview_height as number | null,
+          url,
+          previewUrl,
+          width: pickNumber(g, ["preview_width", "width"]),
+          height: pickNumber(g, ["preview_height", "height"]),
         });
       }
       break;
@@ -114,23 +204,116 @@ function parseMedia(msg: RawIGMessage): void {
 
     case "SlideMessageXMAContent": {
       const xma = content.xma as Record<string, unknown> | undefined;
-      const preview = xma?.preview_image as Record<string, unknown> | undefined;
+      const targetUrl =
+        pickString(xma, ["target_url", "fallback_url", "url"]) ??
+        pickString(content, ["target_url", "fallback_url", "url"]) ??
+        null;
+
       insertMedia({
         messageId: msg.id,
         attachmentType: "XMA_SHARE",
-        url: xma?.target_url as string | null,
-        previewUrl: preview?.url as string | null,
-        width: preview?.width as number | null,
-        height: preview?.height as number | null,
+        url: targetUrl,
+        previewUrl: null,
+        width: null,
+        height: null,
       });
       break;
     }
+
+    case "SlideMessageMusicStickerXMAContent":
+      parseMusicStickerXma();
+      break;
+
+    default:
+      if (messageType === "MUSIC_STICKER_XMA") {
+        parseMusicStickerXma();
+      } else if (messageType === "MESSAGE_INLINE_SHARE") {
+        // Inline shares often arrive with MESSAGE_INLINE_SHARE content_type.
+        const xma = content.xma as Record<string, unknown> | undefined;
+
+        insertMedia({
+          messageId: msg.id,
+          attachmentType: "XMA_SHARE",
+          url:
+            pickString(xma, ["target_url", "fallback_url", "url"]) ??
+            pickString(content, ["target_url", "fallback_url", "url"]) ??
+            null,
+          previewUrl: null,
+          width: null,
+          height: null,
+        });
+      } else if (messageType === "INSTAGRAM_MESSAGING_ANIMATED_IMAGE") {
+        const animated =
+          (content.animated_media as Record<string, unknown>[]) ?? [];
+        for (const media of animated) {
+          insertMedia({
+            messageId: msg.id,
+            attachmentType: (media.is_sticker as boolean)
+              ? "STICKER_GIF"
+              : "GIF",
+            url:
+              pickString(media, [
+                "attachment_mp4_url",
+                "attachment_cdn_url",
+                "attachment_url",
+                "media_url",
+                "url",
+              ]) ?? null,
+            previewUrl:
+              pickString(media, [
+                "preview_cdn_url",
+                "preview_url",
+                "image_url",
+                "thumbnail_url",
+                "url",
+              ]) ?? null,
+            width: pickNumber(media, ["preview_width", "width"]),
+            height: pickNumber(media, ["preview_height", "height"]),
+          });
+        }
+      }
+      break;
   }
+}
+
+function parseEmbeddedRepliedMessage(message: RawIGMessage): void {
+  const parent = message as unknown as { replied_to_message?: unknown };
+  const rawReply = parent.replied_to_message;
+  if (!rawReply || typeof rawReply !== "object") return;
+
+  const reply = rawReply as Record<string, unknown>;
+  const replyId = String(reply.id ?? reply.message_id ?? "").trim();
+  if (!replyId || replyId === message.id) return;
+
+  const senderFbid = String(reply.sender_fbid ?? "").trim();
+  if (!senderFbid) return;
+
+  const embeddedReply: RawIGMessage = {
+    id: replyId,
+    thread_fbid: String(reply.thread_fbid ?? message.thread_fbid),
+    sender_fbid: senderFbid,
+    timestamp_ms: Number(reply.timestamp_ms ?? message.timestamp_ms),
+    content_type:
+      typeof reply.content_type === "string" ? reply.content_type : undefined,
+    text_body: typeof reply.text_body === "string" ? reply.text_body : "",
+    replied_to_message_id:
+      typeof reply.replied_to_message_id === "string"
+        ? reply.replied_to_message_id
+        : null,
+    content:
+      (reply.content as Record<string, unknown> | undefined) ?? undefined,
+  };
+
+  parseMessage(embeddedReply, false);
 }
 
 // Single message
 
-export function parseMessage(msg: RawIGMessage): void {
+export function parseMessage(msg: RawIGMessage, parseNestedReply = true): void {
+  if (parseNestedReply) {
+    parseEmbeddedRepliedMessage(msg);
+  }
+
   // Ensure the conversation row exists (WebSocket messages can arrive before GraphQL seeding)
   ensureConversationExists(msg.thread_fbid);
 
@@ -144,7 +327,15 @@ export function parseMessage(msg: RawIGMessage): void {
     replyToMessageId: msg.replied_to_message_id ?? null,
   });
 
-  if (inserted === null) return; // duplicate — already stored
+  if (inserted === null) {
+    // Backfill media on existing messages when thread re-seeding receives richer payloads.
+    const existingMedia = getMediaForMessage(msg.id);
+    if (!existingMedia.length) {
+      parseMedia(msg);
+    }
+    return;
+  }
+
   parseMedia(msg);
 }
 

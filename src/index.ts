@@ -9,6 +9,7 @@ import {
 } from "@/automation/session.js";
 import { attachDataMidToDOM } from "@/automation/chat.js";
 import { eventBus } from "@/events.js";
+import { isSystemPaused } from "@/runtime/systemControl.js";
 import type { AppEvent } from "@/events.js";
 import { processMessage } from "@/router/pipeline.js";
 
@@ -55,6 +56,15 @@ function registerShutdown(): void {
 function onAppEvent(event: AppEvent): void {
   if (shuttingDown) return;
   if (event.type !== "NEW_MESSAGE" && event.type !== "EDIT") return;
+
+  if (isSystemPaused()) {
+    logger.info("Skipping event while system is paused", {
+      type: event.type,
+      chatId: event.chatId,
+      mid: event.mid,
+    });
+    return;
+  }
 
   if (event.type === "NEW_MESSAGE") {
     if (event.timestampMs < tracker.sessionStartTime) {

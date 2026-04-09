@@ -251,6 +251,63 @@
         color: var(--text);
       }
 
+      .power-wrap {
+        position: relative;
+      }
+      .power-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .power-icon {
+        width: 14px;
+        height: 14px;
+      }
+      .power-btn.paused {
+        border: 1px solid rgba(255, 192, 98, 0.4);
+        color: var(--yellow);
+      }
+      .power-btn.restarting {
+        border: 1px solid rgba(255, 94, 109, 0.45);
+        color: var(--red);
+      }
+      .power-menu {
+        position: absolute;
+        top: calc(100% + 8px);
+        right: 0;
+        min-width: 190px;
+        background: rgba(18, 24, 42, 0.98);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 6px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        z-index: 40;
+        box-shadow: 0 14px 30px rgba(0, 0, 0, 0.35);
+      }
+      .power-item {
+        background: transparent;
+        border: none;
+        border-radius: 9px;
+        color: var(--text);
+        font-family: var(--sans);
+        font-size: 12px;
+        text-align: left;
+        padding: 9px 10px;
+        cursor: pointer;
+      }
+      .power-item:hover {
+        background: rgba(255, 255, 255, 0.07);
+      }
+      .power-item.danger {
+        color: var(--red);
+      }
+      .power-item:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+
       .otp-panel {
         display: inline-flex;
         align-items: center;
@@ -1082,6 +1139,47 @@
         color: #666;
         font-style: italic;
       }
+      .live-media-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .live-media-card {
+        position: relative;
+        border-radius: 16px;
+        overflow: hidden;
+        background: transparent;
+        max-width: min(220px, 100%);
+      }
+      .live-media-thumb {
+        display: block;
+        width: 100%;
+        max-height: 180px;
+        object-fit: cover;
+        background: #111;
+      }
+      .live-media-open {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        border: none;
+        border-radius: 999px;
+        padding: 4px 9px;
+        font-size: 10px;
+        font-family: var(--mono);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        background: rgba(0, 0, 0, 0.6);
+        color: #fff;
+        text-decoration: none;
+        line-height: 1;
+      }
+      .live-media-fallback {
+        padding: 8px 10px;
+        color: #cbd4ec;
+        font-size: 11px;
+        font-family: var(--mono);
+      }
 
       .live-activity {
         border-top: 1px solid #1a1a1a;
@@ -1748,6 +1846,31 @@
             Submit
           </button>
         </div>
+        <div class="power-wrap" id="powerWrap">
+          <button
+            class="btn secondary power-btn"
+            id="powerBtn"
+            onclick="togglePowerMenu(event)"
+          >
+            <i data-lucide="power" class="power-icon"></i>
+            <span id="powerLabel">Running</span>
+          </button>
+          <div class="power-menu hidden" id="powerMenu">
+            <button
+              class="power-item"
+              id="powerPauseResumeBtn"
+              onclick="handleSystemAction('toggle-pause')"
+            >
+              Pause System
+            </button>
+            <button
+              class="power-item danger"
+              onclick="handleSystemAction('reload-browser')"
+            >
+              Reload Browser
+            </button>
+          </div>
+        </div>
         <button class="btn secondary" onclick="refreshAll()">↻ Refresh</button>
       </div>
       <div class="content" id="content"></div>
@@ -1803,6 +1926,12 @@
           serverCwd: "",
           sseSource: null,
           waitingForPassword: false,
+        },
+        system: {
+          paused: false,
+          browserReloading: false,
+          browserReloadingAt: null,
+          busy: false,
         },
       };
 
@@ -1890,6 +2019,7 @@
           cfg,
           ttsOptions,
           otpStatus,
+          systemStatus,
         ] = await Promise.all([
           fetchJSON("/api/conversations"),
           fetchJSON("/api/messages?limit=200"),
@@ -1902,6 +2032,7 @@
           fetchJSON("/config"),
           fetchJSON("/api/tts/options"),
           fetchJSON("/api/otp/status"),
+          fetchJSON("/api/system/status"),
         ]);
 
         if (conversations) state.conversations = conversations;
@@ -1917,6 +2048,14 @@
         if (otpStatus && typeof otpStatus.pending === "boolean") {
           state.otp.pending = otpStatus.pending;
           state.otp.requestedAt = otpStatus.requestedAt || null;
+        }
+        if (systemStatus && typeof systemStatus.paused === "boolean") {
+          state.system.paused = Boolean(systemStatus.paused);
+          state.system.browserReloading = Boolean(
+            systemStatus.browserReloading,
+          );
+          state.system.browserReloadingAt =
+            systemStatus.browserReloadingAt || null;
         }
 
         state.counts = {
@@ -1934,7 +2073,110 @@
         };
         updateBadges();
         renderOtpPanel();
+        renderPowerControls();
         if (state.view !== "config" && state.view !== "shell") renderView();
+      }
+
+      async function refreshSystemStatus() {
+        const status = await fetchJSON("/api/system/status");
+        if (!status || typeof status.paused !== "boolean") return;
+        state.system.paused = Boolean(status.paused);
+        state.system.browserReloading = Boolean(status.browserReloading);
+        state.system.browserReloadingAt = status.browserReloadingAt || null;
+        renderPowerControls();
+      }
+
+      function togglePowerMenu(event) {
+        if (event) event.stopPropagation();
+        const menu = document.getElementById("powerMenu");
+        if (!menu) return;
+        menu.classList.toggle("hidden");
+      }
+
+      function closePowerMenu() {
+        const menu = document.getElementById("powerMenu");
+        if (menu) menu.classList.add("hidden");
+      }
+
+      function renderPowerControls() {
+        const label = document.getElementById("powerLabel");
+        const powerBtn = document.getElementById("powerBtn");
+        const pauseResumeBtn = document.getElementById("powerPauseResumeBtn");
+        if (!label || !powerBtn || !pauseResumeBtn) return;
+
+        const paused = state.system.paused;
+        const restarting = state.system.browserReloading;
+        const busy = Boolean(state.system.busy);
+
+        label.textContent = restarting
+          ? "Reloading Browser..."
+          : paused
+            ? "Paused"
+            : "Running";
+
+        powerBtn.classList.toggle("paused", paused && !restarting);
+        powerBtn.classList.toggle("restarting", restarting);
+        powerBtn.disabled = busy || restarting;
+
+        pauseResumeBtn.textContent = paused ? "Resume System" : "Pause System";
+        pauseResumeBtn.disabled = busy || restarting;
+      }
+
+      async function handleSystemAction(action) {
+        if (state.system.busy) return;
+
+        let normalizedAction = action;
+        if (action === "toggle-pause") {
+          normalizedAction = state.system.paused ? "resume" : "pause";
+        }
+
+        if (
+          normalizedAction === "reload-browser" &&
+          !window.confirm("Reload the browser session now?")
+        ) {
+          closePowerMenu();
+          return;
+        }
+
+        state.system.busy = true;
+        closePowerMenu();
+        renderPowerControls();
+
+        try {
+          const res = await fetch("/api/system/control", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: normalizedAction }),
+          });
+          const payload = await res.json().catch(() => null);
+          if (!res.ok) throw new Error(payload?.error || `HTTP ${res.status}`);
+
+          if (payload?.state && typeof payload.state.paused === "boolean") {
+            state.system.paused = Boolean(payload.state.paused);
+            state.system.browserReloading = Boolean(
+              payload.state.browserReloading,
+            );
+            state.system.browserReloadingAt =
+              payload.state.browserReloadingAt || null;
+          }
+
+          showToast(payload?.message || "System control updated");
+
+          if (normalizedAction === "reload-browser") {
+            labelBrowserReloadPending();
+          }
+        } catch (err) {
+          showToast(`System action failed: ${err?.message || String(err)}`);
+        } finally {
+          state.system.busy = false;
+          renderPowerControls();
+        }
+      }
+
+      function labelBrowserReloadPending() {
+        state.system.browserReloading = true;
+        state.system.browserReloadingAt = Date.now();
+        renderPowerControls();
       }
 
       async function refreshOtpStatus() {
@@ -2044,6 +2286,13 @@
         };
         es.onmessage = (e) => handleSSEEvent(JSON.parse(e.data));
       }
+
+      document.addEventListener("click", (event) => {
+        const wrap = document.getElementById("powerWrap");
+        const target = event.target;
+        if (!wrap || !(target instanceof Node)) return;
+        if (!wrap.contains(target)) closePowerMenu();
+      });
 
       function handleSSEEvent(ev) {
         const now = new Date().toLocaleTimeString();
@@ -2589,13 +2838,14 @@
                   else pos = "mid";
                 }
                 const deletedClass = m.isDeleted ? " deleted" : "";
+                const mediaOnlyClass = isMediaOnlyMessage(m)
+                  ? " has-media"
+                  : "";
                 const editedMark = m.isEdited
                   ? ' <span style="font-size:10px;opacity:.55">(edited)</span>'
                   : "";
-                const text = m.isDeleted
-                  ? "Message deleted"
-                  : esc(m.textContent || "[no text]");
-                const bubble = `<div class="live-bubble ${pos}${isOut ? " out" : ""}${deletedClass}">${text}${editedMark}</div>`;
+                const bodyHtml = renderLiveMessageBody(m);
+                const bubble = `<div class="live-bubble ${pos}${isOut ? " out" : ""}${deletedClass}${mediaOnlyClass}">${bodyHtml}${editedMark}</div>`;
                 if (m.replyToMessageId) {
                   const replied = msgById.get(m.replyToMessageId);
                   const repliedToBot = replied
@@ -2620,8 +2870,15 @@
                   const label = labelName
                     ? `<div class="live-reply-label">${senderName} replied to ${esc(labelName)}</div>`
                     : "";
+                  const repliedType = String(replied?.m?.messageType || "")
+                    .trim()
+                    .replace(/_/g, " ")
+                    .toLowerCase();
                   const quoteText = replied
-                    ? esc(replied.m.textContent || "[media]")
+                    ? esc(
+                        replied.m.textContent ||
+                          (repliedType ? `[${repliedType}]` : "[media]"),
+                      )
                     : "[original message]";
                   const quoteTone = repliedToBot
                     ? "source-outgoing"
@@ -2654,6 +2911,85 @@
 </div>`;
           })
           .join("");
+      }
+
+      function renderLiveMessageBody(message) {
+        if (message.isDeleted) return "Message deleted";
+
+        const text = String(message.textContent || "").trim();
+        const mediaHtml = renderLiveMediaList(message.media);
+
+        if (text && !mediaHtml) return esc(text);
+        if (!text && mediaHtml) return mediaHtml;
+        if (text && mediaHtml) {
+          return `<div class="live-media-stack"><div>${esc(text)}</div>${mediaHtml}</div>`;
+        }
+
+        const typeFallback = String(message.messageType || "")
+          .trim()
+          .replace(/_/g, " ")
+          .toLowerCase();
+        if (typeFallback) return `[${esc(typeFallback)}]`;
+        return "[empty]";
+      }
+
+      function renderLiveMediaList(mediaItems) {
+        if (!Array.isArray(mediaItems) || mediaItems.length === 0) return "";
+
+        return `<div class="live-media-stack">${mediaItems
+          .map((item) => renderLiveMediaCard(item))
+          .join("")}</div>`;
+      }
+
+      function isMediaOnlyMessage(message) {
+        const text = String(message?.textContent || "").trim();
+        const mediaItems = Array.isArray(message?.media) ? message.media : [];
+        return !text && mediaItems.length > 0;
+      }
+
+      function renderLiveMediaCard(item) {
+        const attachmentType = String(item?.attachmentType || "media").trim();
+        const normalizedType = attachmentType.toLowerCase();
+        const previewUrl = String(item?.previewUrl || item?.url || "").trim();
+        const fullUrl = String(item?.url || previewUrl || "").trim();
+        const hasImage = previewUrl && isPreviewImageType(normalizedType);
+        const isXmaType = normalizedType.includes("xma");
+        const label = liveMediaLabel(normalizedType);
+
+        const mediaInner = hasImage
+          ? `<img class="live-media-thumb" loading="lazy" src="${esc(previewUrl)}" alt="${esc(label)} preview" />`
+          : `<div class="live-media-fallback">${esc(label)}${fullUrl ? " attached" : ""}</div>`;
+
+        const openOverlay =
+          fullUrl && (hasImage || isXmaType)
+            ? `<a class="live-media-open" href="${esc(fullUrl)}" target="_blank" rel="noopener noreferrer">open</a>`
+            : "";
+
+        return `<div class="live-media-card">
+  ${mediaInner}
+  ${openOverlay}
+</div>`;
+      }
+
+      function isPreviewImageType(type) {
+        if (!type) return true;
+        return ["image", "gif", "sticker", "reel", "video", "clip"].some(
+          (t) => type.includes(t),
+        );
+      }
+
+      function liveMediaLabel(type) {
+        if (!type) return "Media";
+        if (type.includes("music")) return "Music";
+        if (type.includes("sticker")) return "Sticker";
+        if (type.includes("gif")) return "GIF";
+        if (type.includes("reel")) return "Reel";
+        if (type.includes("video") || type.includes("clip")) return "Video";
+        if (type.includes("image") || type.includes("photo")) return "Image";
+        return type
+          .split(/[_\s-]+/)
+          .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+          .join(" ");
       }
 
       function renderLive() {
@@ -2724,7 +3060,7 @@ ${
     <div class="live-thread-avatar">${selectedChat?.avatarUrl ? `<img src="${esc(selectedChat.avatarUrl)}" style="width:100%;height:100%;object-fit:cover">` : esc(initials(selectedTitle))}</div>
     <div>
       <div class="live-thread-name">${esc(selectedTitle)}</div>
-      <div class="live-thread-status">Instagram · read only</div>
+      <div class="live-thread-status">Instagram · text and command send enabled</div>
     </div>
   </div>
   <div class="live-msg-scroll" id="liveMsgScroll">
@@ -2732,9 +3068,9 @@ ${
     ${renderMessageGroups(groups, botId)}
   </div>
   <div class="live-command-bar">
-    <input id="liveCommandInput" class="live-command-input" type="text" placeholder="Type a command, e.g. /gif cat"
+    <input id="liveCommandInput" class="live-command-input" type="text" placeholder="Type a message or command (e.g. /gif cat)"
       onkeydown="if(event.key==='Enter'){event.preventDefault();executeLiveCommand();}" />
-    <button id="liveCommandSend" class="live-command-send" onclick="executeLiveCommand()">Execute</button>
+    <button id="liveCommandSend" class="live-command-send" onclick="executeLiveCommand()">Send</button>
   </div>
   <div class="live-command-status" id="liveCommandStatus"></div>
   <div class="live-activity">
@@ -2808,33 +3144,38 @@ ${
         const input = document.getElementById("liveCommandInput");
         const button = document.getElementById("liveCommandSend");
         const status = document.getElementById("liveCommandStatus");
-        const command = String(input?.value || "").trim();
-        if (!command) {
-          showToast("Type a command first");
+        const rawInput = String(input?.value || "").trim();
+        if (!rawInput) {
+          showToast("Type a message first");
           return;
         }
         if (button) button.disabled = true;
-        if (status) status.textContent = "Executing command...";
+        if (status) status.textContent = "Sending...";
         try {
           const response = await fetch("/api/commands/execute", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ chatId, command }),
+            body: JSON.stringify({ chatId, input: rawInput }),
           });
           const payload = await response.json();
           if (!response.ok)
             throw new Error(payload.error || `HTTP ${response.status}`);
           if (input) input.value = "";
-          const commandName =
-            payload.classifiedCommand?.commandName || "command";
-          if (status) status.textContent = `Executed: ${commandName}`;
-          showToast(`Executed: ${commandName}`);
+          if (payload.mode === "command") {
+            const commandName =
+              payload.classifiedCommand?.commandName || "command";
+            if (status) status.textContent = `Executed command: ${commandName}`;
+            showToast(`Command executed: ${commandName}`);
+          } else {
+            if (status) status.textContent = "Text message sent";
+            showToast("Text message sent");
+          }
           await refreshAll();
           refreshLiveSelection(chatId);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          if (status) status.textContent = `Command failed: ${message}`;
-          showToast(`Command failed: ${message}`);
+          if (status) status.textContent = `Send failed: ${message}`;
+          showToast(`Send failed: ${message}`);
         } finally {
           if (button) button.disabled = false;
         }
