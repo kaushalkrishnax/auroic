@@ -13,6 +13,7 @@ RUN npx playwright install chromium-headless-shell
 COPY tsconfig.json ./
 COPY src ./src
 COPY drizzle ./drizzle
+COPY models ./models
 COPY scripts/start.sh ./start.sh
 
 RUN chmod +x start.sh && npm run build && npm prune --omit=dev
@@ -35,7 +36,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pipewire \
     pipewire-pulse \
     && rm -rf /var/lib/apt/lists/*
-
+    
+    
 COPY --from=builder /app /app
 
 RUN npx playwright install-deps chromium-headless-shell \
