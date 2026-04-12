@@ -1995,6 +1995,11 @@
 
       // Data fetching
 
+      let refreshAllInFlight = null;
+      let refreshAllPending = false;
+      let sseRefreshTimer = null;
+      let pendingLiveRefreshChatId = null;
+
       async function fetchJSON(url) {
         try {
           const r = await fetch(url);
@@ -2007,6 +2012,12 @@
       }
 
       async function refreshAll() {
+        if (refreshAllInFlight) {
+          refreshAllPending = true;
+          return refreshAllInFlight;
+        }
+
+        refreshAllInFlight = (async () => {
         const [
           conversations,
           messages,
@@ -2030,7 +2041,7 @@
           fetchJSON("/api/commands"),
           fetchJSON("/api/commands/registry"),
           fetchJSON("/config"),
-          fetchJSON("/api/tts/options"),
+          state.ttsOptions ? Promise.resolve(null) : fetchJSON("/api/tts/options"),
           fetchJSON("/api/otp/status"),
           fetchJSON("/api/system/status"),
         ]);
@@ -2075,6 +2086,35 @@
         renderOtpPanel();
         renderPowerControls();
         if (state.view !== "config" && state.view !== "shell") renderView();
+        })();
+
+        try {
+          await refreshAllInFlight;
+        } finally {
+          refreshAllInFlight = null;
+          if (refreshAllPending) {
+            refreshAllPending = false;
+            queueMicrotask(() => {
+              void refreshAll();
+            });
+          }
+        }
+      }
+
+      function scheduleSSERefresh(chatId) {
+        if (chatId && chatId === state.liveSelectedChatId) {
+          pendingLiveRefreshChatId = chatId;
+        }
+
+        if (sseRefreshTimer) return;
+
+        sseRefreshTimer = setTimeout(async () => {
+          sseRefreshTimer = null;
+          const liveChatId = pendingLiveRefreshChatId;
+          pendingLiveRefreshChatId = null;
+          await refreshAll();
+          refreshLiveSelection(liveChatId);
+        }, 250);
       }
 
       async function refreshSystemStatus() {
@@ -2305,7 +2345,7 @@
 
         switch (ev.type) {
           case "NEW_MESSAGE":
-            refreshAll().then(() => refreshLiveSelection(ev.chatId));
+            scheduleSSERefresh(ev.chatId);
             if (state.view !== "messages")
               document.getElementById("badge-messages")?.classList.add("new");
             appendFeed({
@@ -2314,28 +2354,28 @@
             });
             break;
           case "EDIT":
-            refreshAll().then(() => refreshLiveSelection(ev.chatId));
+            scheduleSSERefresh(ev.chatId);
             appendFeed({
               text: `EDIT  chat:${shortId(ev.chatId)}  mid:${shortId(ev.mid)}`,
               time: now,
             });
             break;
           case "DELETE":
-            refreshAll().then(() => refreshLiveSelection(ev.chatId));
+            scheduleSSERefresh(ev.chatId);
             appendFeed({
               text: `DELETE  chat:${shortId(ev.chatId)}  mid:${shortId(ev.mid)}`,
               time: now,
             });
             break;
           case "REACTION_ADD":
-            refreshAll().then(() => refreshLiveSelection(ev.chatId));
+            scheduleSSERefresh(ev.chatId);
             appendFeed({
               text: `REACTION+  chat:${shortId(ev.chatId)}  ${ev.reaction}`,
               time: now,
             });
             break;
           case "REACTION_REMOVE":
-            refreshAll().then(() => refreshLiveSelection(ev.chatId));
+            scheduleSSERefresh(ev.chatId);
             appendFeed({
               text: `REACTION-  chat:${shortId(ev.chatId)}`,
               time: now,
@@ -2349,7 +2389,7 @@
             if (state.view === "router") renderView();
             break;
           case "OUTGOING":
-            refreshAll().then(() => refreshLiveSelection(ev.chatId));
+            scheduleSSERefresh(ev.chatId);
             appendFeed({
               text: `OUTGOING  chat:${shortId(ev.chatId)}  ${ev.actionType}`,
               time: now,

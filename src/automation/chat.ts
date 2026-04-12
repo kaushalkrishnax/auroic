@@ -614,13 +614,14 @@ async function openMediaTab(
 
     try {
       await btn.click();
-      await sleep(400);
     } catch (err) {
       logger.warn("openMediaTab: media button click failed", {
         error: (err as Error).message,
       });
       return null;
     }
+
+    await sleep(200);
 
     dialog = page
       .locator(SELECTORS.dialog)
@@ -668,7 +669,7 @@ async function openMediaTab(
     }
   }
 
-  await sleep(300);
+  await sleep(200);
 
   const panelReady = dialog
     .locator(
@@ -761,14 +762,9 @@ export async function sendText(
       return false;
     }
 
-    const replyReady = await selectToReply(chatId, targetMid);
-    if (targetMid && !replyReady) {
-      logger.warn("Skipping text send: reply target unavailable", {
-        chatId,
-        targetMid,
-      });
-      return false;
-    }
+    // const replyReady = await selectToReply(chatId, targetMid);
+    // if (targetMid && !replyReady) return false;
+    await selectToReply(chatId, targetMid);
 
     const input = page.locator(SELECTORS.messageInput).first();
 

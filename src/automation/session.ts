@@ -15,6 +15,11 @@ import logger from "@/utils/logger.js";
 let context: BrowserContext | null = null;
 let page: Page | null = null;
 let polling: NodeJS.Timeout | null = null;
+let dialogPollMisses = 0;
+
+const DIALOG_POLL_FAST_MS = 2_000;
+const DIALOG_POLL_SLOW_MS = 8_000;
+const DIALOG_POLL_BACKOFF_MISSES = 4;
 
 let pendingOtpResolver: ((code: string) => void) | null = null;
 let pendingOtpRequestedAt: number | null = null;
@@ -46,14 +51,40 @@ const waitMailbox = (t = 45000) =>
       ]);
 
 const startPolling = (p: Page) => {
-  if (polling) clearInterval(polling);
-  polling = setInterval(() => handleDialogs(p).catch(() => {}), 2000);
+  stopPolling();
+  dialogPollMisses = 0;
+
+  const tick = async () => {
+    try {
+      const handled = await handleDialogs(p);
+      dialogPollMisses = handled ? 0 : dialogPollMisses + 1;
+    } catch {
+      dialogPollMisses += 1;
+    }
+
+    if (!page || page.isClosed() || p.isClosed()) {
+      stopPolling();
+      return;
+    }
+
+    const nextDelay =
+      dialogPollMisses >= DIALOG_POLL_BACKOFF_MISSES
+        ? DIALOG_POLL_SLOW_MS
+        : DIALOG_POLL_FAST_MS;
+
+    polling = setTimeout(() => {
+      void tick();
+    }, nextDelay);
+  };
+
+  void tick();
 };
 
 const stopPolling = () => {
   if (!polling) return;
-  clearInterval(polling);
+  clearTimeout(polling);
   polling = null;
+  dialogPollMisses = 0;
 };
 
 export const isOtpPending = () => pendingOtpResolver !== null;
@@ -191,7 +222,15 @@ export const ensureSession = async () => {
   return page!;
 };
 
-export const handleDialogs = async (p: Page) => {
+export const handleDialogs = async (p: Page): Promise<boolean> => {
+  const currentUrl = p.url();
+  if (
+    !currentUrl.includes("instagram.com") ||
+    (!currentUrl.includes("/accounts/") && !currentUrl.includes("/direct/"))
+  ) {
+    return false;
+  }
+
   for (const sel of [
     SELECTORS.continueButton,
     SELECTORS.saveInfoButton,
@@ -200,9 +239,11 @@ export const handleDialogs = async (p: Page) => {
     const el = p.locator(sel).first();
     if (await el.isVisible().catch(() => false)) {
       await el.click().catch(() => {});
-      return;
+      return true;
     }
   }
+
+  return false;
 };
 
 const openChat = async (p: Page, id: string) => {
