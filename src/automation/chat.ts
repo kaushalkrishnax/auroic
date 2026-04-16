@@ -585,10 +585,19 @@ async function searchAndSelectMedia(
   }
 
   await searchInput.fill(sanitizeMediaTitle(title));
-  await sleep(200);
 
   const items = mediaDialog.locator(SELECTORS.mediaItemButton);
-  if (!(await visible(items.first()))) {
+  let appeared = false;
+  
+  for (let i = 0; i < 3; i++) {
+    if (await visible(items.first())) {
+      appeared = true;
+      break;
+    }
+    await sleep(200);
+  }
+
+  if (!appeared) {
     logger.warn("searchAndSelectMedia: no results appeared", { title });
     return false;
   }
