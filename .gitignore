@@ -8,3 +8,6 @@ dist/
 *.gguf
 *.wav
 *.bin
+.codemogger/
+*.db
+*.db-wal
