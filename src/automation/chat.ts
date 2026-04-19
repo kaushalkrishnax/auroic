@@ -602,6 +602,8 @@ async function searchAndSelectMedia(
     return false;
   }
 
+  await sleep(200)
+
   const count = await items.count();
   const cap = maxRandomIndex > 0 ? Math.min(maxRandomIndex, count) : count;
   for (let i = 0; i < cap; i++) {

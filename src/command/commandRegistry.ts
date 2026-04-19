@@ -6,6 +6,12 @@ import {
 } from "@/automation/chat.js";
 import type { ActionContext } from "@/types/index.js";
 import logger from "@/utils/logger.js";
+import {
+  pauseChatAutomation,
+  resumeChatAutomation,
+  setChatPriority,
+  AutomationPriority,
+} from "@/runtime/systemControl.js";
 
 /**
  * Command handler function type.
@@ -29,69 +35,105 @@ export interface CommandDefinition {
  */
 const commandHandlers = {
   async sendGif(context: ActionContext) {
-    const title = context.classifiedCommand!.query.trim() || "funny";
-    const sent = await sendGIF(title, context.chatId, context.targetMessageId!);
-    if (!sent) {
-      throw new Error(`send_gif failed for query: ${title}`);
-    }
+    // Priority escalation: pause any ongoing @BOT message automation
+    pauseChatAutomation(context.chatId, "command-execution");
+    setChatPriority(context.chatId, AutomationPriority.COMMAND);
 
-    logger.info("Command handler sent GIF", {
-      command: "send_gif",
-      conversationId: context.chatId,
-      query: title,
-    });
+    try {
+      const title = context.classifiedCommand!.query.trim() || "funny";
+      const sent = await sendGIF(title, context.chatId, context.targetMessageId!);
+      if (!sent) {
+        throw new Error(`send_gif failed for query: ${title}`);
+      }
+
+      logger.info("Command handler sent GIF", {
+        command: "send_gif",
+        conversationId: context.chatId,
+        query: title,
+      });
+    } finally {
+      // Resume lower-priority work after completion
+      resumeChatAutomation(context.chatId, "command-completed");
+    }
   },
 
   async sendSticker(context: ActionContext) {
-    const title = context.classifiedCommand!.query.trim() || "funny";
-    const sent = await sendSticker(
-      title,
-      context.chatId,
-      context.targetMessageId!,
-    );
-    if (!sent) {
-      throw new Error(`send_sticker failed for query: ${title}`);
-    }
+    // Priority escalation: pause any ongoing @BOT message automation
+    pauseChatAutomation(context.chatId, "command-execution");
+    setChatPriority(context.chatId, AutomationPriority.COMMAND);
 
-    logger.info("Command handler sent sticker", {
-      command: "send_sticker",
-      conversationId: context.chatId,
-      query: title,
-    });
+    try {
+      const title = context.classifiedCommand!.query.trim() || "funny";
+      const sent = await sendSticker(
+        title,
+        context.chatId,
+        context.targetMessageId!,
+      );
+      if (!sent) {
+        throw new Error(`send_sticker failed for query: ${title}`);
+      }
+
+      logger.info("Command handler sent sticker", {
+        command: "send_sticker",
+        conversationId: context.chatId,
+        query: title,
+      });
+    } finally {
+      // Resume lower-priority work after completion
+      resumeChatAutomation(context.chatId, "command-completed");
+    }
   },
 
   async sendVoiceNote(context: ActionContext) {
-    const text = context.classifiedCommand!.query.trim();
-    const sent = await sendVoiceNote(
-      text,
-      context.chatId,
-      context.targetMessageId!,
-    );
-    if (!sent) {
-      throw new Error(`send_voice_note failed for query: ${text}`);
-    }
+    // Priority escalation: pause any ongoing @BOT message automation
+    pauseChatAutomation(context.chatId, "command-execution");
+    setChatPriority(context.chatId, AutomationPriority.COMMAND);
 
-    logger.info("Command handler sent voice note", {
-      command: "send_voice_note",
-      conversationId: context.chatId,
-      query: text,
-    });
+    try {
+      const text = context.classifiedCommand!.query.trim();
+      const sent = await sendVoiceNote(
+        text,
+        context.chatId,
+        context.targetMessageId!,
+      );
+      if (!sent) {
+        throw new Error(`send_voice_note failed for query: ${text}`);
+      }
+
+      logger.info("Command handler sent voice note", {
+        command: "send_voice_note",
+        conversationId: context.chatId,
+        query: text,
+      });
+    } finally {
+      // Resume lower-priority work after completion
+      resumeChatAutomation(context.chatId, "command-completed");
+    }
   },
 
   async playMusic(context: ActionContext) {
-    const query = context.classifiedCommand!.query.trim();
+    // Priority escalation: pause any ongoing @BOT message automation
+    pauseChatAutomation(context.chatId, "command-execution");
+    setChatPriority(context.chatId, AutomationPriority.COMMAND);
 
-    const sent = await playMusic(query);
+    try {
+      const query = context.classifiedCommand!.query.trim();
 
-    if (!sent) {
-      throw new Error(`play_music failed for query: ${query}`);
+      const sent = await playMusic(query);
+
+      if (!sent) {
+        throw new Error(`play_music failed for query: ${query}`);
+      }
+
+      logger.info("Command handler played music", {
+        command: "play_music",
+        conversationId: context.chatId,
+        query,
+      });
+    } finally {
+      // Resume lower-priority work after completion
+      resumeChatAutomation(context.chatId, "command-completed");
     }
-
-    logger.info("Command handler played music", {
-      command: "play_music",
-      conversationId: context.chatId,
-      query,
-    });
   },
 };
 

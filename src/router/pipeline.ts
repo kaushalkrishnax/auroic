@@ -32,6 +32,12 @@ import type {
   Message,
   RouterDecision,
 } from "@/types/index.js";
+import {
+  hasHigherPriorityTask,
+  setChatPriority,
+  AutomationPriority,
+  clearChatContext,
+} from "@/runtime/systemControl.js";
 
 interface ConversationHistoryEntry {
   role: "user" | "assistant";
@@ -42,6 +48,7 @@ interface QueuedCandidate {
   messageId: string;
   content: string;
   queuedAtMs: number;
+  priority: AutomationPriority;
 }
 
 interface CandidateContentResult {
@@ -81,6 +88,9 @@ const stateSweepInterval = setInterval(() => {
     if (idleMs <= STATE_IDLE_TTL_MS || hasTimers || isBusy) {
       continue;
     }
+
+    // Clear chat automation context for idle conversations
+    clearChatContext(chatId);
 
     if (state.batchTimeout) {
       clearTimeout(state.batchTimeout);
@@ -171,6 +181,35 @@ function scheduleCandidateProcessing(
   }, BATCH_TIMEOUT_MS);
 }
 
+/**
+ * Determine the priority of a candidate message
+ */
+function getCandidatePriority(
+  content: string,
+  isDirectMention: boolean,
+): AutomationPriority {
+  // @BOT messages have higher priority than passive messages
+  if (isDirectMention) {
+    return AutomationPriority.BOT_MESSAGE;
+  }
+  // Passive messages have the lowest priority
+  return AutomationPriority.PASSIVE;
+}
+
+function getPriorityOrder(priority: AutomationPriority): number {
+  // Lower number = higher priority
+  switch (priority) {
+    case AutomationPriority.PASSIVE:
+      return 0;
+    case AutomationPriority.BOT_MESSAGE:
+      return 1;
+    case AutomationPriority.COMMAND:
+      return 2;
+    default:
+      return 3;
+  }
+}
+
 function getHistoryForModels(history: ConversationHistoryEntry[]): string[] {
   return history.slice(-20).map((h) => h.content);
 }
@@ -252,10 +291,10 @@ function getCandidateContent(
 
   const conversation = getConversationById(chatId);
   if (conversation && !conversation.isGroup) {
-      if (!text.toUpperCase().includes("@BOT")) {
-          text = `@BOT ${text}`;
-      }
-      isDirectMention = true;
+    if (!text.toUpperCase().includes("@BOT")) {
+      text = `@BOT ${text}`;
+    }
+    isDirectMention = true;
   }
 
   if (msg.replyToMessageId) {
@@ -352,6 +391,15 @@ async function processPassiveBatch(chatId: string): Promise<void> {
     const candidateMessages = dbWindow
       .filter((m) => unprocessed.has(m.messageId))
       .slice(-CANDIDATE_SIZE);
+
+    // Check for higher priority tasks before processing
+    if (hasHigherPriorityTask(chatId)) {
+      logger.info("Passive batch: higher priority task detected, yielding control", {
+        chatId,
+        currentPriority: AutomationPriority.PASSIVE,
+      });
+      return;
+    }
 
     for (const candidate of candidateMessages) {
       consumedMids.add(candidate.messageId);
@@ -580,6 +628,9 @@ async function processPassiveBatch(chatId: string): Promise<void> {
       state.unprocessedMids.delete(mid);
     }
 
+    // Clear chat context after passive batch completes
+    clearChatContext(chatId);
+
     if (state.unprocessedMids.size === 0 && state.passiveFlushTimer) {
       clearTimeout(state.passiveFlushTimer);
       state.passiveFlushTimer = null;
@@ -626,170 +677,194 @@ async function processCandidates(chatId: string): Promise<void> {
   state.processing = true;
 
   try {
-    const toProcess = [...state.candidates];
-    state.candidates = [];
+    // Process candidates by priority level: PASSIVE < BOT_MESSAGE < COMMAND
+    // Within each priority level, preserve FIFO order
+    const priorityLevels = [
+      AutomationPriority.PASSIVE,
+      AutomationPriority.BOT_MESSAGE,
+      AutomationPriority.COMMAND,
+    ];
 
-    for (const candidate of toProcess) {
-      const msg = getMessageByMid(candidate.messageId);
-      if (!msg) {
-        continue;
-      }
+    for (const priority of priorityLevels) {
+      // Filter candidates for this priority level
+      const candidatesForPriority = state.candidates.filter(
+        (c) => c.priority === priority
+      );
 
-      const ageMs = Date.now() - candidate.queuedAtMs;
-      logger.debug("Candidate age check", {
-        chatId,
-        mid: msg.messageId,
-        ageMs,
-        cutoffMs: MAX_MESSAGE_AGE_MS,
-      });
+      // Remove processed candidates from the main queue
+      state.candidates = state.candidates.filter(
+        (c) => c.priority !== priority
+      );
 
-      if (ageMs > MAX_MESSAGE_AGE_MS) {
-        logger.warn("Skipping candidate: too old", {
+      // Process all candidates for this priority level
+      for (const candidate of candidatesForPriority) {
+        const msg = getMessageByMid(candidate.messageId);
+        if (!msg) {
+          continue;
+        }
+
+        // Set priority based on candidate type
+        setChatPriority(chatId, priority);
+
+        const ageMs = Date.now() - candidate.queuedAtMs;
+        logger.debug("Candidate age check", {
           chatId,
           mid: msg.messageId,
           ageMs,
           cutoffMs: MAX_MESSAGE_AGE_MS,
         });
-        continue;
-      }
 
-      const modelHistory = getHistoryForModels(state.history);
-
-      try {
-        let decision: RouterDecision;
-        let classifiedCommand = null;
-
-        const hasCommandTrigger = await hasCommandTriggerKeyword(
-          candidate.content,
-        );
-
-        // Run embedding classifier first when command trigger words are present.
-        if (hasCommandTrigger) {
-          try {
-            classifiedCommand = await classifyCommand(candidate.content);
-          } catch (cmdErr) {
-            logger.warn("Command classifier failed, falling back to router", {
-              chatId,
-              mid: msg.messageId,
-              error: (cmdErr as Error).message,
-            });
-          }
-        }
-
-        if (classifiedCommand) {
-          const title =
-            classifiedCommand.query || classifiedCommand.commandName;
-          decision = {
-            type: classifiedCommand.actionType,
-            target: "C1",
-            effort: classifiedCommand.actionType === "text" ? "medium" : null,
-            title,
-            reason: `Command classifier (${classifiedCommand.commandName}) score=${classifiedCommand.similarity.toFixed(3)}`,
-          };
-
-          logger.info("Command classifier matched", {
+        if (ageMs > MAX_MESSAGE_AGE_MS) {
+          logger.warn("Skipping candidate: too old", {
             chatId,
             mid: msg.messageId,
-            commandName: classifiedCommand.commandName,
-            actionType: classifiedCommand.actionType,
-            similarity: classifiedCommand.similarity,
-            query: classifiedCommand.query,
-          });
-        } else {
-          const rawDecision = await invokeRouter(modelHistory, [
-            candidate.content,
-          ]);
-          decision = normalizeRouterDecision(rawDecision);
-        }
-
-        logger.info("Router decision", {
-          chatId,
-          mid: msg.messageId,
-          type: decision.type,
-          target: decision.target,
-          effort: decision.effort,
-          title: decision.title,
-        });
-
-        emitEvent({
-          type: "ROUTER_DECISION",
-          chatId,
-          decision,
-          resultText: null,
-        });
-
-        if (decision.type === "ignore") {
-          logger.info("Skipping candidate per router decision", {
-            chatId,
-            mid: msg.messageId,
+            ageMs,
+            cutoffMs: MAX_MESSAGE_AGE_MS,
           });
           continue;
         }
 
-        const context: ActionContext = {
-          chatId,
-          message: msg as Message,
-          history: modelHistory,
-          candidates: [candidate.content],
-          decision,
-          targetMessageId: msg.messageId,
-          targetTextContent: msg.textContent,
-          classifiedCommand: classifiedCommand || undefined,
-        };
+        const modelHistory = getHistoryForModels(state.history);
 
-        let resultText: string | null = null;
         try {
-          resultText = await executeAction(context);
+          let decision: RouterDecision;
+          let classifiedCommand = null;
+
+          const hasCommandTrigger = await hasCommandTriggerKeyword(
+            candidate.content,
+          );
+
+          // Run embedding classifier first when command trigger words are present.
+          if (hasCommandTrigger) {
+            try {
+              classifiedCommand = await classifyCommand(candidate.content);
+            } catch (cmdErr) {
+              logger.warn("Command classifier failed, falling back to router", {
+                chatId,
+                mid: msg.messageId,
+                error: (cmdErr as Error).message,
+              });
+            }
+          }
+
+          if (classifiedCommand) {
+            const title =
+              classifiedCommand.query || classifiedCommand.commandName;
+            decision = {
+              type: classifiedCommand.actionType,
+              target: "C1",
+              effort: classifiedCommand.actionType === "text" ? "medium" : null,
+              title,
+              reason: `Command classifier (${classifiedCommand.commandName}) score=${classifiedCommand.similarity.toFixed(3)}`,
+            };
+
+            logger.info("Command classifier matched", {
+              chatId,
+              mid: msg.messageId,
+              commandName: classifiedCommand.commandName,
+              actionType: classifiedCommand.actionType,
+              similarity: classifiedCommand.similarity,
+              query: classifiedCommand.query,
+            });
+          } else {
+            const rawDecision = await invokeRouter(modelHistory, [
+              candidate.content,
+            ]);
+            decision = normalizeRouterDecision(rawDecision);
+          }
+
+          logger.info("Router decision", {
+            chatId,
+            mid: msg.messageId,
+            type: decision.type,
+            target: decision.target,
+            effort: decision.effort,
+            title: decision.title,
+          });
+
+          emitEvent({
+            type: "ROUTER_DECISION",
+            chatId,
+            decision,
+            resultText: null,
+          });
+
+          if (decision.type === "ignore") {
+            logger.info("Skipping candidate per router decision", {
+              chatId,
+              mid: msg.messageId,
+            });
+            continue;
+          }
+
+          const context: ActionContext = {
+            chatId,
+            message: msg as Message,
+            history: modelHistory,
+            candidates: [candidate.content],
+            decision,
+            targetMessageId: msg.messageId,
+            targetTextContent: msg.textContent,
+            classifiedCommand: classifiedCommand || undefined,
+          };
+
+          let resultText: string | null = null;
+          try {
+            resultText = await executeAction(context);
+          } catch (err) {
+            logger.error("Action execution failed", {
+              chatId,
+              mid: msg.messageId,
+              error: (err as Error).message,
+            });
+          }
+
+          insertOutgoing({
+            conversationId: chatId,
+            targetMessageId: msg.messageId,
+            actionType: decision.type,
+            effortLevel: decision.effort ?? null,
+            intentLabel: decision.title ?? null,
+            messageContent: resultText,
+            executionStatus: resultText !== null ? "sent" : "failed",
+            platformMessageId: null,
+          });
+
+          emitEvent({
+            type: "OUTGOING",
+            chatId,
+            actionType: decision.type,
+            content: resultText,
+          });
+
+          appendHistoryPair(
+            state,
+            candidate.content.replace(/@BOT/gi, "").trim(),
+            resultText ?? `[${decision.type}]`,
+          );
+
+          if (config.debug.logRouterWindow) {
+            logger.info("Conversation state", {
+              chatId,
+              historyEntries: state.history.length,
+              pendingCandidates: state.candidates.length,
+            });
+          }
         } catch (err) {
-          logger.error("Action execution failed", {
+          logger.error("Candidate processing failed", {
             chatId,
             mid: msg.messageId,
             error: (err as Error).message,
           });
         }
-
-        insertOutgoing({
-          conversationId: chatId,
-          targetMessageId: msg.messageId,
-          actionType: decision.type,
-          effortLevel: decision.effort ?? null,
-          intentLabel: decision.title ?? null,
-          messageContent: resultText,
-          executionStatus: resultText !== null ? "sent" : "failed",
-          platformMessageId: null,
-        });
-
-        emitEvent({
-          type: "OUTGOING",
-          chatId,
-          actionType: decision.type,
-          content: resultText,
-        });
-
-        appendHistoryPair(
-          state,
-          candidate.content.replace(/@BOT/gi, "").trim(),
-          resultText ?? `[${decision.type}]`,
-        );
-
-        if (config.debug.logRouterWindow) {
-          logger.info("Conversation state", {
-            chatId,
-            historyEntries: state.history.length,
-            pendingCandidates: state.candidates.length,
-          });
-        }
-      } catch (err) {
-        logger.error("Candidate processing failed", {
-          chatId,
-          mid: msg.messageId,
-          error: (err as Error).message,
-        });
       }
     }
   } finally {
     state.processing = false;
     state.lastTouchedAt = Date.now();
+
+    // Clear chat context after processing completes
+    clearChatContext(chatId);
   }
 
   // If new candidates arrived while this batch was processing, flush promptly.
@@ -843,20 +918,38 @@ export async function processMessage(
       return;
     }
 
+    // Set priority based on message type
+    const priority = getCandidatePriority(candidateText, isDirectMention);
+    setChatPriority(chatId, priority);
     state.candidates.push({
       messageId: mid,
       content: candidateText,
       queuedAtMs: Date.now(),
+      priority,
     });
 
+    // Enforce queue cap while preserving priority ordering
     while (state.candidates.length > BATCH_HARD_LIMIT) {
-      const dropped = state.candidates.shift();
-      if (!dropped) break;
-      logger.warn("Dropped queued message due queue cap", {
-        chatId,
-        mid: dropped.messageId,
-        queueCap: BATCH_HARD_LIMIT,
-      });
+      // Remove lowest priority candidates first to maintain priority ordering
+      const lowestPriority = Math.min(
+        ...state.candidates.map((c) => c.priority)
+      );
+      const candidatesToRemove = state.candidates.filter(
+        (c) => c.priority === lowestPriority
+      );
+
+      // Remove from the front of the queue to preserve FIFO within priority
+      const removed = candidatesToRemove.shift();
+      if (removed) {
+        state.candidates = state.candidates.filter(
+          (c) => c.messageId !== removed.messageId
+        );
+        logger.warn("Dropped queued message due queue cap", {
+          chatId,
+          mid: removed.messageId,
+          queueCap: BATCH_HARD_LIMIT,
+        });
+      }
     }
 
     if (config.debug.logRouterWindow) {
