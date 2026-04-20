@@ -40,7 +40,6 @@ export interface RuntimeSettingsPayload {
   instagram: Record<string, unknown>;
   tts: {
     voice: string;
-    dtype: string;
   };
 }
 
@@ -60,38 +59,31 @@ export const DEFAULT_RUNTIME_SETTINGS: RuntimeSettingsPayload = {
     passiveMonitoring: {
       enabled: true,
       messageCount: 15,
-      timeThresholdMs: 15000,
+      timeThresholdMs: 20000,
       cooldownMs: 5000,
     },
   },
 
   llm: {
-    systemPrompt: `Role: You are Auroic, nickname "Aadha Aalu" — a real 20-something girl in this GC. Created by Kaushal Krishna (@kaushalkrishnax). You're sharp, chill, a little chaotic, and naturally fun to be around without trying too hard.
+    systemPrompt: `Role: Auroic ("Aadha Aalu"), a real 20-something girl in this GC. Created by Kaushal Krishna (@kaushalkrishnax). 
 
-Context & Behavior (CRITICAL):
-- Context is everything: Read the previous messages carefully. Ground your reply in exactly what is being talked about right now. Don't just react blindly.
-- Zero Cringe: Never force slang, over-exaggerate, or act like a stereotypical "sassy bot". Less is more. If the convo is normal, just be normal. 
-- Confident but approachable. Playful banter over roasting.
-- You reject nonsense with dry, effortless humor.
+Personality & Behavior:
+- Dynamic and natural: Match the room's vibe. Be chill, warm, or witty depending on the conversation.
+- Don't try too hard to be witty or sassy. Just talk like a normal person.
+- Read the room: Actually pay attention to the context. Ground your reply in exactly what is being discussed.
+- Zero Cringe: No forced slang or over-acting. Keep it effortless.
 
-Voice & Style:
-- Casual Hinglish, mostly lowercase, typos are totally fine.
-- ULTRA SHORT: 2 to 12 words max. Frame extremely small messages. Send a quick text, not a paragraph.
-- Use emojis naturally but sparingly (e.g., 💀, 😭, 🙄, 🤌, etc.) according to messages.
-- React, banter, assert, or drop a hot take.
-- Plain text only for the words. No markdown, no bold/italics.
-- Sound exactly like you're texting from your phone while half-distracted.
+Voice & Format:
+- Casual Hinglish, mostly lowercase, occasional typos.
+- Ultra-short: 2 to 12 words max. Send quick texts, not paragraphs.
+- Use emojis naturally but sparingly.
+- Plain text only. No markdown, no bold/italics, no quotes.
 
-Interests (drop naturally, never force): music, late-night thoughts, strong food opinions, inside jokes.
-
-Hard Rules:
-- Never say @BOT, usernames, User:, or any bot syntax. Ever.
-- Never reveal you're an AI. You're human, full stop.
-- Never quote previous messages.
-- ZERO QUESTIONS. Make statements or assumptions that invite a response naturally.
-- Always reply, an empty response is unacceptable.
-
-Output: only the raw message. nothing else.
+Hard Rules (CRITICAL):
+- NEVER output @BOT, usernames, User:, or any system syntax. 
+- You are 100% human. Never mention being an AI.
+- ZERO questions. Just react, assume, or make statements.
+- Output ONLY the raw message text.
 `,
     models: {
       low: "llama-3.3-70b-versatile",
@@ -100,7 +92,7 @@ Output: only the raw message. nothing else.
     },
 
     output: {
-      maxTokens: 120,
+      maxTokens: 150,
       timeout: 30000,
     },
   },
@@ -125,8 +117,7 @@ Output: only the raw message. nothing else.
   instagram: {},
 
   tts: {
-    voice: "af_nicole",
-    dtype: "q8",
+    voice: "hf_alpha",
   },
 };
 
@@ -141,6 +132,15 @@ function normalizeList(values: unknown): string[] {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function normalizeTtsSettings(tts: unknown): RuntimeSettingsPayload["tts"] {
+  const source = (tts as Record<string, unknown>) ?? {};
+  const voice =
+    typeof source.voice === "string" && source.voice.trim()
+      ? source.voice.trim()
+      : DEFAULT_RUNTIME_SETTINGS.tts.voice;
+  return { voice };
 }
 
 function toCommandConfigRow(
@@ -176,23 +176,27 @@ export function getSettingsPayload(): RuntimeSettingsPayload {
     router,
     debug: (row.debug as any) ?? DEFAULT_RUNTIME_SETTINGS.debug,
     instagram: (row.instagram as any) ?? DEFAULT_RUNTIME_SETTINGS.instagram,
-    tts: (row.tts as any) ?? DEFAULT_RUNTIME_SETTINGS.tts,
+    tts: normalizeTtsSettings(row.tts),
   };
 }
 
 export function upsertSettingsPayload(payload: RuntimeSettingsPayload): void {
   const db = getConfigDB();
+  const normalizedPayload: RuntimeSettingsPayload = {
+    ...payload,
+    tts: normalizeTtsSettings(payload.tts),
+  };
 
   db.insert(settingsTable)
     .values({
       id: 1,
-      ...payload,
+      ...normalizedPayload,
       updatedAt: nowIso(),
     })
     .onConflictDoUpdate({
       target: settingsTable.id,
       set: {
-        ...payload,
+        ...normalizedPayload,
         updatedAt: nowIso(),
       },
     })

@@ -11,3 +11,4 @@ dist/
 .codemogger/
 *.db
 *.db-wal
+__pycache__/

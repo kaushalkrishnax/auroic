@@ -3479,8 +3479,6 @@ ${
           return null;
         if (path === "tts.voice" && Array.isArray(state.ttsOptions.voices))
           return state.ttsOptions.voices;
-        if (path === "tts.dtype" && Array.isArray(state.ttsOptions.dtypes))
-          return state.ttsOptions.dtypes;
         return null;
       }
 

@@ -653,9 +653,6 @@ export async function sendSticker(
   targetMid?: string,
 ): Promise<boolean> {
   try {
-    const replyReady = await selectToReply(chatId, targetMid);
-    if (targetMid && !replyReady) return false;
-
     const mediaDialog = await openMediaTab(getPage(), 0);
     if (!mediaDialog) return false;
 
@@ -684,8 +681,7 @@ export async function sendGIF(
   targetMid?: string,
 ): Promise<boolean> {
   try {
-    const replyReady = await selectToReply(chatId, targetMid);
-    if (targetMid && !replyReady) return false;
+    await selectToReply(chatId, targetMid);
 
     const mediaDialog = await openMediaTab(getPage(), 1);
     if (!mediaDialog) return false;
@@ -715,7 +711,8 @@ export async function sendStickerOrGIF(
   targetMid?: string,
 ): Promise<boolean> {
   try {
-    await selectToReply(chatId, targetMid);
+    const replyReady = await selectToReply(chatId, targetMid);
+    if (targetMid && !replyReady) return false;
 
     const page = getPage();
     const mediaDialog = await openMediaTab(page, 0);

@@ -51,7 +51,7 @@ All processing is local. Credentials stay in your browser profile.
 - **Local router** for fast low-cost action selection
 - **Context-aware text replies** via OpenAI-compatible APIs
 - **Media actions**: reactions, GIFs, stickers, voice notes, and music
-- **Optional local TTS** with `kokoro-js`
+- **Optional local TTS** via Kokoro ONNX service
 - **Real-time message handling** via WebSocket interception
 - **Dashboard** at `localhost:7860` for live monitoring and config
 - **Hot-reload config** from dashboard/API without restart
@@ -186,21 +186,20 @@ Commands are managed via `config.db` and can be enabled/disabled, aliased, and f
 
 ### Text-to-Speech (TTS)
 
-Auroic uses **`kokoro-js`** for local TTS. TTS is optional and mainly used for voice note commands.
+Auroic uses a local **Kokoro ONNX FastAPI service** for TTS at `http://localhost:8000/tts`. TTS is optional and used by voice note commands.
 
-**Features:**
+**Current behavior:**
 
-- Local inference via `kokoro-js`
-- Multiple voice options (American/British, Female/Male)
-- Supports quantized (q8) and full precision (fp16, fp32) models
-- Integrates with PipeWire virtual audio for seamless Instagram voice message recording
+- Runtime config uses `tts.voice` only, which maps to Kokoro's voice options
+- The app sends `{ text, voice, speed }` to the local `/tts` endpoint
+- TTS output is returned as WAV audio and attached as a voice note
 
-**Supported Voices:**
+**Supported voice keys:**
 
-- `af`, `af_bella`, `af_nicole`, `af_sarah`, `af_sky`
-- `am_adam`, `am_michael`
-- `bf_emma`, `bf_isabella`
-- `bm_george`, `bm_lewis`
+- `alpha`
+- `beta`
+- `omega`
+- `psi`
 
 ---
 
@@ -213,7 +212,7 @@ Auroic uses **`kokoro-js`** for local TTS. TTS is optional and mainly used for v
 | Node.js             | ≥ 20 LTS                                        |
 | Ollama              | Local router inference service (`ollama serve`) |
 | Router Model        | `auroic-router:latest` in Ollama (**Required**) |
-| TTS Runtime         | `kokoro-js` package (included in dependencies)  |
+| TTS Runtime         | Local FastAPI service (`models/kokoro_tts/app.py`) |
 | Docker              | ≥ 24 _(optional)_                               |
 | PipeWire/PulseAudio | Required for TTS voice note recording (Linux)   |
 
@@ -247,14 +246,11 @@ Set `router.hostUrl` and `router.model` in `config.db` (Dashboard → Config →
 
 #### 2. TTS Model (**Optional**)
 
-Kokoro TTS now uses `kokoro-js`. You do not need to manually manage ONNX files, runtime binaries, or dictionary assets.
+Kokoro TTS runs through the local Python service in `models/kokoro_tts/app.py`.
 
-```bash
-# Optional: pre-warm Kokoro assets once during setup
-npm run dev
-```
-
-On first TTS use, `kokoro-js` downloads required model assets automatically.
+- The service loads Kokoro ONNX assets from Hugging Face
+- TTS endpoint: `POST http://localhost:8000/tts`
+- Request body: `{ "text": "...", "voice": "alpha|beta|omega|psi", "speed": 1.0 }`
 
 ### Configuration
 
@@ -441,5 +437,5 @@ This project is licensed under the **[Apache License 2.0](LICENSE)**.
 ## Resources
 
 - **Router Model**: [kaushalkrishnax/auroic-router-0.6b](https://huggingface.co/kaushalkrishnax/auroic-router-0.6b)
-- **TTS Model**: [onnx-community/Kokoro-82M-ONNX](https://huggingface.co/onnx-community/Kokoro-82M-ONNX)
+- **TTS Model**: [leonelhs/kokoro-thewh1teagle](https://huggingface.co/leonelhs/kokoro-thewh1teagle)
 - **Author**: [Kaushal Krishna](https://github.com/kaushalkrishnax)

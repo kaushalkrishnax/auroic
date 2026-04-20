@@ -128,11 +128,7 @@ export function getConfig() {
       voice:
         typeof tts?.voice === "string" && tts.voice.trim()
           ? tts.voice.trim()
-          : "af_nicole",
-      dtype:
-        typeof tts?.dtype === "string" && tts.dtype.trim()
-          ? tts.dtype.trim().toLowerCase()
-          : "q8",
+          : "hf_alpha",
     },
     db: { path: env.dbPath },
     configDb: { path: env.configDbPath },

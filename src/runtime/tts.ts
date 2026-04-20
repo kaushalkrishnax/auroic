@@ -1,140 +1,81 @@
-import { KokoroTTS } from "kokoro-js";
-import { spawn } from "child_process";
 import getConfig from "@/runtime/index.js";
-import logger from "@/utils/logger.js";
-import path from "path";
 
-let tts: KokoroTTS | null = null;
+const TTS_ENDPOINT = "http://localhost:8000/tts";
 
-const KOKORO_MODEL_ID = path.join(process.cwd(), "models", "kokoro-tts");
-const SUPPORTED_DTYPES = ["q8", "fp16", "fp32"] as const;
-const SUPPORTED_VOICES = [
-  "af",
-  "af_bella",
-  "af_nicole",
-  "af_sarah",
-  "af_sky",
-  "am_adam",
-  "am_michael",
-  "bf_emma",
-  "bf_isabella",
-  "bm_george",
-  "bm_lewis",
-] as const;
+const VOICE_MAP = {
+  alpha: "alpha",
+  beta: "beta",
+  omega: "omega",
+  psi: "psi",
+} as const;
 
-export type KokoroDtype = "q8" | "fp16" | "fp32";
-export type KokoroVoice = string;
+export type KokoroVoice = keyof typeof VOICE_MAP;
 
-/**
- * Extract Kokoro's internal voice union (compile-time)
- */
-type KokoroInternalVoice = Parameters<KokoroTTS["generate"]>[1] extends {
-  voice?: infer V;
-}
-  ? Exclude<V, undefined>
-  : never;
-
-/**
- * Runtime list of valid voices (source of truth)
- */
-function getValidKokoroVoices(): Set<string> {
-  const voices = [
-    "af",
-    "af_bella",
-    "af_nicole",
-    "af_sarah",
-    "af_sky",
-    "am_adam",
-    "am_michael",
-    "bf_emma",
-    "bf_isabella",
-    "bm_george",
-    "bm_lewis",
-  ] as const;
-
-  return new Set<string>(voices);
+interface KokoroTtsOptions {
+  voices: string[];
+  defaultVoice: string;
 }
 
-export interface KokoroTtsOptions {
-  dtypes: KokoroDtype[];
-  voices: KokoroVoice[];
-  defaultDtype: KokoroDtype;
-  defaultVoice: KokoroVoice;
-}
+function resolveVoice(input?: string): string {
+  if (!input) return VOICE_MAP.alpha;
 
-function pickValueOrFallback<T extends string>(
-  requested: unknown,
-  available: T[],
-  fallback: T,
-): T {
-  if (typeof requested === "string" && available.includes(requested as T)) {
-    return requested as T;
+  const key = input.toLowerCase() as KokoroVoice;
+
+  if (key in VOICE_MAP) {
+    return VOICE_MAP[key];
   }
 
-  if (available.includes(fallback)) return fallback;
-  return available[0] ?? fallback;
+  return VOICE_MAP.alpha;
 }
 
 export async function getKokoroTtsOptions(): Promise<KokoroTtsOptions> {
-  const dtypes = [...SUPPORTED_DTYPES];
-  const voices = [...SUPPORTED_VOICES];
+  const config = getConfig();
+  const voices = Object.values(VOICE_MAP);
+  const defaultVoice = resolveVoice(config.tts?.voice);
 
   return {
-    dtypes,
     voices,
-    defaultDtype: pickValueOrFallback("q8", dtypes, "q8"),
-    defaultVoice: pickValueOrFallback("af_nicole", voices, "af_nicole"),
+    defaultVoice,
   };
-}
-
-export async function initKokoro(): Promise<void> {
-  if (tts) return;
-
-  const { dtypes, defaultDtype } = await getKokoroTtsOptions();
-  const config = getConfig();
-  const desiredDtype = pickValueOrFallback(
-    config.tts?.dtype,
-    dtypes,
-    defaultDtype,
-  );
-
-  tts = await KokoroTTS.from_pretrained(KOKORO_MODEL_ID, {
-    dtype: desiredDtype as "q8" | "fp16" | "fp32",
-    device: "cpu",
-  });
 }
 
 export async function generateSpeechBuffer(
   text: string,
   voice?: KokoroVoice,
 ): Promise<Buffer> {
-  const options = await getKokoroTtsOptions();
+  if (!text || typeof text !== "string") {
+    throw new Error("Invalid text input for TTS");
+  }
+
   const config = getConfig();
+  const selectedVoice = resolveVoice(voice ?? config.tts?.voice);
 
-  await initKokoro();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
 
-  if (!tts) {
-    throw new Error("Kokoro not initialized.");
+  try {
+    const res = await fetch(TTS_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        text,
+        voice: selectedVoice,
+        speed: 1.0,
+      }),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      throw new Error(`TTS server error: ${res.status}`);
+    }
+
+    const arrayBuffer = await res.arrayBuffer();
+    return Buffer.from(arrayBuffer);
+  } catch (err) {
+    throw new Error(`TTS request failed: ${String(err)}`);
+  } finally {
+    clearTimeout(timeout);
   }
-
-  const selectedVoice = pickValueOrFallback(
-    voice ?? config.tts?.voice,
-    options.voices,
-    options.defaultVoice,
-  );
-
-  const validVoicesSet = getValidKokoroVoices();
-
-  if (!validVoicesSet.has(selectedVoice)) {
-    throw new Error(`Invalid Kokoro voice: ${selectedVoice}`);
-  }
-
-  const audio = await tts.generate(text, {
-    voice: selectedVoice as KokoroInternalVoice,
-  });
-
-  const blob = audio.toBlob();
-  const arrayBuffer = await blob.arrayBuffer();
-
-  return Buffer.from(arrayBuffer);
 }
