@@ -43,6 +43,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     
 COPY --from=builder /app /app
 
+RUN python3 -m venv /opt/venv
+
+# Activate venv path
+ENV PATH="/opt/venv/bin:$PATH"
+
 # Install Python dependencies for Kokoro TTS
 RUN python3 -m pip install --no-cache-dir \
     fastapi \
