@@ -36,27 +36,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     espeak-ng \
     pipewire \
     pipewire-pulse \
-    python3 \
-    python3-pip \
-    python3-venv \
     && rm -rf /var/lib/apt/lists/*
     
 COPY --from=builder /app /app
-
-RUN python3 -m venv /opt/venv
-
-# Activate venv path
-ENV PATH="/opt/venv/bin:$PATH"
-
-# Install Python dependencies for Kokoro TTS
-RUN python3 -m pip install --no-cache-dir \
-    fastapi \
-    uvicorn \
-    misaki \
-    kokoro-onnx \
-    huggingface_hub \
-    numpy \
-    soundfile
 
 RUN npx playwright install-deps chromium-headless-shell \
     && rm -rf /var/lib/apt/lists/*

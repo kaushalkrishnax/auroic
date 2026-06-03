@@ -129,6 +129,10 @@ export function getConfig() {
         typeof tts?.voice === "string" && tts.voice.trim()
           ? tts.voice.trim()
           : "hf_alpha",
+      model:
+        typeof tts?.model === "string" && tts.model.trim()
+          ? tts.model.trim()
+          : "tts-1",
     },
     db: { path: env.dbPath },
     configDb: { path: env.configDbPath },

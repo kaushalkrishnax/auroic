@@ -40,6 +40,7 @@ export interface RuntimeSettingsPayload {
   instagram: Record<string, unknown>;
   tts: {
     voice: string;
+    model: string;
   };
 }
 
@@ -117,7 +118,8 @@ Hard Rules (CRITICAL):
   instagram: {},
 
   tts: {
-    voice: "hf_alpha",
+    voice: "hm_omega",
+    model: "tts-1",
   },
 };
 
@@ -140,7 +142,11 @@ function normalizeTtsSettings(tts: unknown): RuntimeSettingsPayload["tts"] {
     typeof source.voice === "string" && source.voice.trim()
       ? source.voice.trim()
       : DEFAULT_RUNTIME_SETTINGS.tts.voice;
-  return { voice };
+  const model =
+    typeof source.model === "string" && source.model.trim()
+      ? source.model.trim()
+      : DEFAULT_RUNTIME_SETTINGS.tts.model;
+  return { voice, model };
 }
 
 function toCommandConfigRow(

@@ -73,7 +73,7 @@ import {
   type CommandConfigRow,
   type RuntimeSettingsPayload,
 } from "@/db/queries/config.js";
-import { getKokoroTtsOptions } from "@/runtime/tts.js";
+import { getTtsOptions } from "@/runtime/tts.js";
 import type { AppEvent } from "@/events.js";
 import type { ActionContext, Message } from "@/types/index.js";
 
@@ -337,7 +337,7 @@ app.get("/api/commands/registry", (c) => {
 
 app.get("/api/tts/options", async (c) => {
   try {
-    return c.json(await getKokoroTtsOptions());
+    return c.json(await getTtsOptions());
   } catch (err) {
     return c.json({ error: (err as Error).message }, 500);
   }
