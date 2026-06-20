@@ -1,6 +1,5 @@
-import fs from "fs";
 import { chromium } from "playwright-core";
-import type { BrowserContext, Page } from "playwright-core";
+import type { Browser, BrowserContext, Page, WebSocket } from "playwright-core";
 import getConfig from "@/runtime/index.js";
 import { attachDataMidsForRecentWindow } from "@/automation/chat.js";
 import { getStartupConversationIds } from "@/db/queries/conversations.js";
@@ -12,25 +11,35 @@ import {
 } from "@/instagram/parsers.js";
 import logger from "@/utils/logger.js";
 
+let browser: Browser | null = null;
 let context: BrowserContext | null = null;
 let page: Page | null = null;
 let polling: NodeJS.Timeout | null = null;
 let dialogPollMisses = 0;
+let browserConnectPromise: Promise<{ browser: Browser; context: BrowserContext; page: Page }> | null = null;
+const CHROMIUM_CDP_URL =
+  process.env.CHROMIUM_CDP_URL ?? "http://127.0.0.1:9222";
 
 const DIALOG_POLL_FAST_MS = 2_000;
 const DIALOG_POLL_SLOW_MS = 8_000;
 const DIALOG_POLL_BACKOFF_MISSES = 4;
+const MAILBOX_TIMEOUT_MS = 45_000;
+const OTP_TIMEOUT_MS = 5 * 60_000;
 
 let pendingOtpResolver: ((code: string) => void) | null = null;
 let pendingOtpRequestedAt: number | null = null;
 
 let mailboxReady = false;
 let mailboxResolve: (() => void) | null = null;
-let mailboxPromise = new Promise<void>((r) => (mailboxResolve = r));
+let mailboxPromise = new Promise<void>((resolve) => {
+  mailboxResolve = resolve;
+});
 
 const resetMailbox = () => {
   mailboxReady = false;
-  mailboxPromise = new Promise<void>((r) => (mailboxResolve = r));
+  mailboxPromise = new Promise<void>((resolve) => {
+    mailboxResolve = resolve;
+  });
 };
 
 const markMailbox = () => {
@@ -40,15 +49,32 @@ const markMailbox = () => {
   mailboxResolve = null;
 };
 
-const waitMailbox = (t = 45000) =>
-  mailboxReady
-    ? Promise.resolve()
-    : Promise.race([
-        mailboxPromise,
-        new Promise((_, rej) =>
-          setTimeout(() => rej(new Error("Mailbox timeout")), t),
-        ),
-      ]);
+const waitMailbox = (timeoutMs = MAILBOX_TIMEOUT_MS) => {
+  if (mailboxReady) return Promise.resolve();
+
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`Mailbox did not load within ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    mailboxPromise.then(
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+};
+
+const stopPolling = () => {
+  if (polling) clearTimeout(polling);
+  polling = null;
+  dialogPollMisses = 0;
+};
 
 const startPolling = (p: Page) => {
   stopPolling();
@@ -58,11 +84,14 @@ const startPolling = (p: Page) => {
     try {
       const handled = await handleDialogs(p);
       dialogPollMisses = handled ? 0 : dialogPollMisses + 1;
-    } catch {
+    } catch (error) {
       dialogPollMisses += 1;
+      logger.debug("Instagram dialog polling failed", {
+        error: String(error),
+      });
     }
 
-    if (!page || page.isClosed() || p.isClosed()) {
+    if (!page || page !== p || p.isClosed()) {
       stopPolling();
       return;
     }
@@ -80,21 +109,16 @@ const startPolling = (p: Page) => {
   void tick();
 };
 
-const stopPolling = () => {
-  if (!polling) return;
-  clearTimeout(polling);
-  polling = null;
-  dialogPollMisses = 0;
-};
-
 export const isOtpPending = () => pendingOtpResolver !== null;
 
 export const getOtpPendingRequestedAt = () => pendingOtpRequestedAt;
 
 export const submitOtpCode = (rawCode: string) => {
   if (!pendingOtpResolver) return false;
+
   const code = rawCode.trim();
   if (!code) return false;
+
   const resolve = pendingOtpResolver;
   pendingOtpResolver = null;
   pendingOtpRequestedAt = null;
@@ -102,7 +126,7 @@ export const submitOtpCode = (rawCode: string) => {
   return true;
 };
 
-const waitForOtpCode = (timeoutMs = 5 * 60_000) =>
+const waitForOtpCode = (timeoutMs = OTP_TIMEOUT_MS) =>
   new Promise<string>((resolve, reject) => {
     if (pendingOtpResolver) {
       reject(new Error("OTP already pending"));
@@ -110,6 +134,7 @@ const waitForOtpCode = (timeoutMs = 5 * 60_000) =>
     }
 
     pendingOtpRequestedAt = Date.now();
+
     const timer = setTimeout(() => {
       if (pendingOtpResolver === onResolve) {
         pendingOtpResolver = null;
@@ -126,100 +151,211 @@ const waitForOtpCode = (timeoutMs = 5 * 60_000) =>
     pendingOtpResolver = onResolve;
   });
 
-export async function connectBrowser() {
-  if (context) return { context };
+const isPageUsable = (candidate: Page | null): candidate is Page =>
+  Boolean(candidate && !candidate.isClosed());
 
-  const cfg = getConfig();
-  fs.mkdirSync(cfg.chromium.profileDir, { recursive: true });
+/**
+ * Connect to native Termux Chromium through its remote debugging endpoint.
+ * Reuse Chromium's default context so its persistent profile and cookies remain available.
+ */
+export async function connectBrowser(): Promise<{
+  browser: Browser;
+  context: BrowserContext;
+  page: Page;
+}> {
+  if (browser && context && isPageUsable(page)) {
+    return { browser, context, page };
+  }
 
-  context = await chromium.launchPersistentContext(cfg.chromium.profileDir, {
-    headless: true,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--disable-background-timer-throttling",
-      "--disable-renderer-backgrounding",
-      "--disable-sync",
-      "--no-first-run",
-      "--disable-default-apps",
-      "--disable-component-update",
-      "--blink-settings=imagesEnabled=false",
-      "--use-fake-ui-for-media-stream",
-      "--allow-file-access-from-files",
-      "--disable-extensions",
-      "--mute-audio",
-    ],
-    permissions: ["microphone"],
-  });
+  if (browserConnectPromise) return browserConnectPromise;
 
-  context.on("close", () => {
-    stopPolling();
-    page = null;
-    context = null;
-  });
+  browserConnectPromise = (async () => {
+    let connectedBrowser: Browser | null = null;
 
-  return { context };
+    try {
+      connectedBrowser = await chromium.connectOverCDP(CHROMIUM_CDP_URL, {
+        timeout: 30_000,
+      });
+
+      const contexts = connectedBrowser.contexts();
+      const existingContext = contexts[0];
+
+      if (!existingContext) {
+        throw new Error(
+          "Chromium CDP connected, but no default browser context was exposed. Start Chromium with --remote-debugging-port=9222 and a user-data-dir.",
+        );
+      }
+
+      const pages = existingContext.pages();
+      const existingPage =
+        pages.find((candidate) => candidate.url().includes("instagram.com")) ??
+        pages.find((candidate) => candidate.url() === "about:blank") ??
+        (await existingContext.newPage());
+
+      browser = connectedBrowser;
+      context = existingContext;
+      page = existingPage;
+
+      existingContext.on("close", () => {
+        if (context !== existingContext) return;
+        stopPolling();
+        page = null;
+        context = null;
+      });
+
+      existingPage.on("close", () => {
+        if (page !== existingPage) return;
+        stopPolling();
+        page = null;
+      });
+
+      connectedBrowser.on("disconnected", () => {
+        if (browser !== connectedBrowser) return;
+        stopPolling();
+        page = null;
+        context = null;
+        browser = null;
+      });
+
+      logger.info("Connected to native Chromium", {
+        browserVersion: connectedBrowser.version(),
+        contextCount: contexts.length,
+        pageCount: pages.length,
+        currentUrl: existingPage.url(),
+      });
+
+      return {
+        browser: connectedBrowser,
+        context: existingContext,
+        page: existingPage,
+      };
+    } catch (error) {
+      if (connectedBrowser) {
+        await connectedBrowser.close().catch(() => undefined);
+      }
+      throw error;
+    }
+  })();
+
+  try {
+    return await browserConnectPromise;
+  } finally {
+    browserConnectPromise = null;
+  }
 }
 
-const attach = (p: Page) => {
-  p.removeAllListeners();
+const frameToText = (payload: string | Buffer): string =>
+  typeof payload === "string"
+    ? payload
+    : Buffer.from(payload).toString("utf8");
 
+const attachWebSocketListeners = (ws: WebSocket) => {
+  logger.info("Instagram WebSocket connected", { url: ws.url() });
+
+  ws.on("framereceived", (frame) => {
+    try {
+      const rawFrame = frameToText(frame.payload);
+
+      const jsonStart = rawFrame.indexOf("{");
+      if (jsonStart < 0) {
+        return;
+      }
+
+      const envelope = JSON.parse(rawFrame.slice(jsonStart)) as {
+        payload?: string;
+      };
+
+      if (typeof envelope.payload !== "string" || !envelope.payload) {
+        return;
+      }
+
+      const decoded = Buffer.from(envelope.payload, "base64").toString("utf8");
+
+      parseWebsocketFrame(decoded, getConfig().instagram.chatIds);
+    } catch (error) {
+      logger.error("Instagram WebSocket frame processing failed", {
+        url: ws.url(),
+        error: String(error),
+      });
+    }
+  });
+
+  ws.on("socketerror", (error) => {
+    logger.error("Instagram WebSocket error", {
+      url: ws.url(),
+      error: String(error),
+    });
+  });
+};
+
+const attach = (p: Page) => {
   p.on("close", () => {
+    if (page !== p) return;
     stopPolling();
     page = null;
   });
 
   p.on("crash", () => {
+    if (page !== p) return;
     stopPolling();
     page = null;
+    logger.error("Instagram page crashed");
   });
 
-  p.on("response", async (res) => {
+  p.on("response", async (response) => {
     try {
-      if (
-        !res.url().includes("/api/graphql") ||
-        res.status() !== 200 ||
-        res.request().method() !== "POST"
-      )
-        return;
+      const url = response.url();
+      const request = response.request();
 
-      const body = res.request().postData();
+      if (!url.includes("instagram.com")) return;
+
+      if (
+        !url.includes("/api/graphql") ||
+        response.status() !== 200 ||
+        request.method() !== "POST"
+      ) {
+        return;
+      }
+
+      const body = request.postData();
       if (!body) return;
 
       if (body.includes("PolarisDirectInboxQuery")) {
-        initMailbox(await res.json());
+        const data = await response.json();
+        initMailbox(data);
         markMailbox();
+        logger.info("Instagram inbox response processed");
         return;
       }
 
       if (body.includes("IGDThreadDetailMainViewContainerQuery")) {
-        const chatId = initThread(await res.json());
-        if (chatId) await attachDataMidsForRecentWindow(chatId, 8);
+        const data = await response.json();
+        const chatId = initThread(data);
+        if (chatId) {
+          await attachDataMidsForRecentWindow(chatId, 8);
+        }
+        logger.info("Instagram thread response processed", {
+          chatId: chatId ?? null,
+        });
       }
-    } catch {}
+    } catch (error) {
+      logger.error("Instagram response processing failed", {
+        error: String(error),
+      });
+    }
   });
 
-  p.on("websocket", (ws) => {
-    ws.on("framereceived", (f) => {
-      try {
-        const payload = f.payload.toString("utf8");
-        if (!payload.includes("/ig_message_sync")) return;
-        parseWebsocketFrame(payload, getConfig().instagram.chatIds);
-      } catch {}
-    });
-  });
+  p.on("websocket", attachWebSocketListeners);
 };
 
 export const getPage = () => {
-  if (!page || page.isClosed()) throw new Error("No session");
+  if (!isPageUsable(page)) throw new Error("No active Instagram session");
   return page;
 };
 
 export const ensureSession = async () => {
-  if (!page || page.isClosed()) await initInstagramSession();
-  return page!;
+  if (!isPageUsable(page)) await initInstagramSession();
+  return getPage();
 };
 
 export const handleDialogs = async (p: Page): Promise<boolean> => {
@@ -231,14 +367,19 @@ export const handleDialogs = async (p: Page): Promise<boolean> => {
     return false;
   }
 
-  for (const sel of [
+  for (const selector of [
     SELECTORS.continueButton,
     SELECTORS.saveInfoButton,
     SELECTORS.notNowButton,
   ]) {
-    const el = p.locator(sel).first();
-    if (await el.isVisible().catch(() => false)) {
-      await el.click().catch(() => {});
+    const element = p.locator(selector).first();
+    if (await element.isVisible().catch(() => false)) {
+      await element.click().catch((error) => {
+        logger.debug("Could not dismiss Instagram dialog", {
+          selector,
+          error: String(error),
+        });
+      });
       return true;
     }
   }
@@ -249,78 +390,126 @@ export const handleDialogs = async (p: Page): Promise<boolean> => {
 const openChat = async (p: Page, id: string) => {
   await p.goto(`https://www.instagram.com/direct/t/${id}/`, {
     waitUntil: "domcontentloaded",
+    timeout: 60_000,
   });
-  await p.waitForURL(new RegExp(`/direct/t/${id}`));
-  await p.waitForSelector(SELECTORS.messageInput);
+
+  await p.waitForURL(new RegExp(`/direct/t/${id}(?:/|$)`), {
+    timeout: 30_000,
+  });
+
+  await p.waitForSelector(SELECTORS.messageInput, {
+    timeout: 30_000,
+  });
+
+  logger.info("Instagram conversation opened", { chatId: id });
+};
+
+const navigateToInbox = async (p: Page) => {
+  await p.goto("https://www.instagram.com/direct/inbox/", {
+    waitUntil: "domcontentloaded",
+    timeout: 60_000,
+  });
+};
+
+const completeLoginIfRequired = async (p: Page) => {
+  if (!p.url().includes("/accounts/login")) return;
+
+  const cfg = getConfig();
+  logger.info("Instagram login page detected");
+
+  await p.waitForSelector(SELECTORS.emailInput, { timeout: 30_000 });
+  await p.fill(SELECTORS.emailInput, cfg.instagram.username);
+  await p.fill(SELECTORS.passwordInput, cfg.instagram.password);
+  await p.click(SELECTORS.submitButton);
+
+  const otpUrlPattern = /\/auth_platform\/codeentry\//;
+  let requiresOtp = otpUrlPattern.test(p.url());
+
+  if (!requiresOtp) {
+    requiresOtp = await p
+      .waitForURL(otpUrlPattern, { timeout: 8_000 })
+      .then(() => true)
+      .catch(() => false);
+  }
+
+  if (requiresOtp) {
+    await p.waitForSelector(SELECTORS.emailInput, { timeout: 30_000 });
+    logger.info("Instagram 2FA code required; waiting for dashboard OTP submission");
+
+    const code = await waitForOtpCode();
+    await p.fill(SELECTORS.emailInput, code);
+    await p.click(SELECTORS.continueButton);
+  }
+
+  await p.waitForURL(/\/direct\//, { timeout: 60_000 }).catch(() => undefined);
+
+  if (p.url().includes("/accounts/login")) {
+    throw new Error(
+      "Instagram login did not complete. Check credentials, 2FA, or any checkpoint in the browser session.",
+    );
+  }
+
+  if (p.url().includes("/challenge/") || p.url().includes("/auth_platform/recaptcha/")) {
+    throw new Error(
+      "Instagram requires an additional security checkpoint. Complete it through an approved browser flow before retrying.",
+    );
+  }
 };
 
 export async function initInstagramSession() {
-  if (page && !page.isClosed()) return;
+  if (isPageUsable(page)) return;
 
-  const { context: ctx } = await connectBrowser();
+  const { page: p } = await connectBrowser();
   const cfg = getConfig();
 
-  const p = ctx.pages()[0] ?? (await ctx.newPage());
-  page = p;
-
   resetMailbox();
+  page = p;
   attach(p);
 
-  let ids = getStartupConversationIds(cfg.instagram.chatIds);
-
-  if (ids.length) {
-    await openChat(p, ids[0]).catch(() => {});
-  } else {
-    await p.goto("https://www.instagram.com/direct/inbox/");
-  }
-
-  if (p.url().includes("/accounts/login")) {
-    await p.waitForSelector(SELECTORS.emailInput);
-    await p.fill(SELECTORS.emailInput, cfg.instagram.username);
-    await p.fill(SELECTORS.passwordInput, cfg.instagram.password);
-    await p.click(SELECTORS.submitButton);
-
-    const requiresOtp =
-      p.url().includes("/auth_platform/codeentry/") ||
-      (await p
-        .waitForURL(/\/auth_platform\/codeentry\//)
-        .then(() => true)
-        .catch(() => false));
-
-    if (requiresOtp) {
-      await p.waitForSelector(SELECTORS.emailInput);
-      logger.info(
-        "Instagram 2FA code required; waiting for dashboard OTP submission",
-      );
-      const code = await waitForOtpCode();
-      await p.fill(SELECTORS.emailInput, code);
-      await p.click(SELECTORS.continueButton);
-    }
-
-    await p.waitForURL(/\/direct\//).catch(() => {});
-  }
+  await navigateToInbox(p);
+  await completeLoginIfRequired(p);
 
   if (!p.url().includes("/direct/")) {
-    await p.goto("https://www.instagram.com/direct/inbox/");
+    await navigateToInbox(p);
   }
 
   startPolling(p);
 
+  let ids = getStartupConversationIds(cfg.instagram.chatIds);
+
   if (!ids.length) {
+    logger.info("No configured startup conversation IDs; waiting for inbox data");
     await waitMailbox();
     ids = getStartupConversationIds(cfg.instagram.chatIds);
-
-    if (!ids.length) throw new Error("No chat");
-
-    await openChat(p, ids[0]);
   }
+
+  if (!ids.length) {
+    throw new Error(
+      "Instagram inbox loaded, but no startup conversations were found. Check chatIds and inbox parsing.",
+    );
+  }
+
+  await openChat(p, ids[0]);
 }
 
 export async function disconnectBrowser() {
   stopPolling();
   pendingOtpResolver = null;
   pendingOtpRequestedAt = null;
-  await context?.close().catch(() => {});
-  context = null;
+
+  const currentBrowser = browser;
+
   page = null;
+  context = null;
+  browser = null;
+
+  if (currentBrowser) {
+    await currentBrowser.close().catch((error) => {
+      logger.debug("Error disconnecting from Chromium CDP", {
+        error: String(error),
+      });
+    });
+  }
+
+  logger.info("Chromium CDP connection disconnected");
 }

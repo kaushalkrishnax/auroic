@@ -427,11 +427,17 @@ interface ParsedEvent {
   is_self?: boolean;
 }
 
-function extractJSON(payload: string): unknown[] | null {
-  const start = payload.indexOf("[");
+function extractJSON(payload: string) {
+  const start = payload.indexOf('[{"data"');
   if (start === -1) return null;
+
+  const end = payload.lastIndexOf('}]');
+  if (end === -1) return null;
+
   try {
-    return JSON.parse(payload.slice(start)) as unknown[];
+    return JSON.parse(
+      payload.slice(start, end + 2)
+    );
   } catch {
     return null;
   }
@@ -441,8 +447,6 @@ export function parseWebsocketFrame(
   payload: string,
   allowedChatIds?: string[],
 ): ParsedEvent[] | null {
-  if (!payload.includes("/ig_message_sync")) return null;
-
   const json = extractJSON(payload);
   if (!json) return null;
 
