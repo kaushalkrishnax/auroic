@@ -13,7 +13,6 @@ RUN npx playwright install chromium-headless-shell
 COPY tsconfig.json ./
 COPY src ./src
 COPY drizzle ./drizzle
-COPY models ./models
 COPY scripts/start.sh ./start.sh
 
 RUN chmod +x start.sh && npm run build && npm prune --omit=dev

@@ -44,11 +44,11 @@ const waitMailbox = (t = 45000) =>
   mailboxReady
     ? Promise.resolve()
     : Promise.race([
-        mailboxPromise,
-        new Promise((_, rej) =>
-          setTimeout(() => rej(new Error("Mailbox timeout")), t),
-        ),
-      ]);
+      mailboxPromise,
+      new Promise((_, rej) =>
+        setTimeout(() => rej(new Error("Mailbox timeout")), t),
+      ),
+    ]);
 
 const startPolling = (p: Page) => {
   stopPolling();
@@ -198,16 +198,29 @@ const attach = (p: Page) => {
         const chatId = initThread(await res.json());
         if (chatId) await attachDataMidsForRecentWindow(chatId, 8);
       }
-    } catch {}
+    } catch { }
   });
 
   p.on("websocket", (ws) => {
     ws.on("framereceived", (f) => {
       try {
-        const payload = f.payload.toString("utf8");
-        if (!payload.includes("/ig_message_sync")) return;
-        parseWebsocketFrame(payload, getConfig().instagram.chatIds);
-      } catch {}
+        const frame = f.payload.toString("utf8");
+
+        const start = frame.indexOf("{");
+        if (start === -1) return;
+
+        const msg = JSON.parse(frame.slice(start));
+        if (!msg?.payload) return;
+
+        const decoded = Buffer
+          .from(msg.payload, "base64")
+          .toString("utf8");
+
+        parseWebsocketFrame(
+          decoded,
+          getConfig().instagram.chatIds
+        );
+      } catch { }
     });
   });
 };
@@ -238,7 +251,7 @@ export const handleDialogs = async (p: Page): Promise<boolean> => {
   ]) {
     const el = p.locator(sel).first();
     if (await el.isVisible().catch(() => false)) {
-      await el.click().catch(() => {});
+      await el.click().catch(() => { });
       return true;
     }
   }
@@ -269,7 +282,7 @@ export async function initInstagramSession() {
   let ids = getStartupConversationIds(cfg.instagram.chatIds);
 
   if (ids.length) {
-    await openChat(p, ids[0]).catch(() => {});
+    await openChat(p, ids[0]).catch(() => { });
   } else {
     await p.goto("https://www.instagram.com/direct/inbox/");
   }
@@ -297,7 +310,7 @@ export async function initInstagramSession() {
       await p.click(SELECTORS.continueButton);
     }
 
-    await p.waitForURL(/\/direct\//).catch(() => {});
+    await p.waitForURL(/\/direct\//).catch(() => { });
   }
 
   if (!p.url().includes("/direct/")) {
@@ -320,7 +333,7 @@ export async function disconnectBrowser() {
   stopPolling();
   pendingOtpResolver = null;
   pendingOtpRequestedAt = null;
-  await context?.close().catch(() => {});
+  await context?.close().catch(() => { });
   context = null;
   page = null;
 }
