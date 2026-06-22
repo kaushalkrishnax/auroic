@@ -158,9 +158,7 @@ export function resumeChatAutomation(
 /**
  * Get chat automation status
  */
-export function getChatAutomationStatus(
-  chatId: string,
-): {
+export function getChatAutomationStatus(chatId: string): {
   currentPriority: AutomationPriority;
   suspendedAutomation: boolean;
   suspendedAt: number | null;

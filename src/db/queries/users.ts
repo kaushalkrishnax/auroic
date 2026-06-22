@@ -2,17 +2,17 @@ import { eq } from "drizzle-orm";
 import { getDB } from "@/db/index.js";
 import { users } from "@/db/schema.js";
 import type { SelectUser, InsertUser } from "@/db/schema.js";
-import type { RawIGUser } from "@/types/index.js";
+import type { PlatformUser } from "@/types/index.js";
 
-export function createUsers(rawUsers: RawIGUser[]): void {
+export function createUsers(platformUsers: PlatformUser[]): void {
   const db = getDB();
-  const rows: InsertUser[] = rawUsers.map((u) => ({
-    userId: u.interop_messaging_user_fbid,
+  const rows: InsertUser[] = platformUsers.map((u) => ({
+    userId: u.userId,
     username: u.username ?? null,
-    displayName: u.full_name ?? null,
-    avatarUrl: u.profile_pic_url ?? null,
-    isVerified: u.is_verified ?? false,
-    platform: "instagram",
+    displayName: u.displayName ?? null,
+    avatarUrl: u.avatarUrl ?? null,
+    isVerified: u.isVerified ?? false,
+    platform: u.platform,
   }));
 
   if (rows.length === 0) return;

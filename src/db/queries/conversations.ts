@@ -9,38 +9,37 @@ import type {
   SelectConversation,
   SelectConversationParticipant,
 } from "@/db/schema.js";
-import type { RawIGThread, RawIGUser } from "@/types/index.js";
+import type { PlatformConversation } from "@/types/index.js";
 
-export function ensureConversationExists(conversationId: string): void {
+export function ensureConversationExists(conversationId: string, platform = "instagram"): void {
   getDB()
     .insert(conversations)
-    .values({ conversationId: conversationId, platform: "instagram" })
+    .values({ conversationId: conversationId, platform })
     .onConflictDoNothing()
     .run();
 }
 
-export function createConversation(thread: RawIGThread): void {
+export function createConversation(conversation: PlatformConversation): void {
   const db = getDB();
   db.insert(conversations)
     .values({
-      conversationId: thread.thread_fbid,
-      platform: "instagram",
-      title: thread.thread_title ?? null,
-      avatarUrl: thread.thread_image_url ?? null,
-      createdByUserId:
-        thread.group_creator?.interop_messaging_user_fbid ?? null,
-      isGroup: thread.is_group ?? false,
-      isMuted: thread.is_muted ?? false,
+      conversationId: conversation.conversationId,
+      platform: conversation.platform,
+      title: conversation.title ?? null,
+      avatarUrl: conversation.avatarUrl ?? null,
+      createdByUserId: conversation.createdByUserId ?? null,
+      isGroup: conversation.isGroup ?? false,
+      isMuted: conversation.isMuted ?? false,
     })
     .onConflictDoUpdate({
       target: conversations.conversationId,
       set: {
-        title: thread.thread_title ?? null,
-        avatarUrl: thread.thread_image_url ?? null,
-        createdByUserId:
-          thread.group_creator?.interop_messaging_user_fbid ?? null,
-        isGroup: thread.is_group ?? false,
-        isMuted: thread.is_muted ?? false,
+        platform: conversation.platform,
+        title: conversation.title ?? null,
+        avatarUrl: conversation.avatarUrl ?? null,
+        createdByUserId: conversation.createdByUserId ?? null,
+        isGroup: conversation.isGroup ?? false,
+        isMuted: conversation.isMuted ?? false,
       },
     })
     .run();
@@ -117,13 +116,13 @@ export function getStartupConversationIds(
 
 export function createConversationParticipants(
   conversationId: string,
-  rawUsers: RawIGUser[],
+  userIds: string[],
 ): void {
-  if (rawUsers.length === 0) return;
+  if (userIds.length === 0) return;
   const db = getDB();
-  const rows = rawUsers.map((u) => ({
+  const rows = userIds.map((userId) => ({
     conversationId: conversationId,
-    userId: u.interop_messaging_user_fbid,
+    userId: userId,
   }));
   db.insert(conversationParticipants).values(rows).onConflictDoNothing().run();
 }

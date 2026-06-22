@@ -1,5 +1,4 @@
 import logger from "@/utils/logger.js";
-import { addReaction } from "@/automation/chat.js";
 import type { ActionContext } from "@/types/index.js";
 
 export async function executeReact(
@@ -23,11 +22,11 @@ export async function executeReact(
     return null;
   }
 
-  const reacted = await addReaction(
-    decision.title,
-    chatId,
-    context.targetMessageId,
-  );
+  const core = context.core;
+  const reacted = core
+    ? await core.addReaction(decision.title, chatId, context.targetMessageId)
+    : false;
+
   if (!reacted) {
     logger.warn("React action skipped: target unavailable or reaction failed", {
       chatId,

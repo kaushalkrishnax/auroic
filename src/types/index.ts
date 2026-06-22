@@ -49,38 +49,24 @@ export interface ActionContext {
   targetTextContent: string | null;
   /** Classified command if matched by command classifier */
   classifiedCommand?: ClassifiedCommand;
+  core?: any;
 }
 
-/** Raw Instagram user shape from GraphQL responses */
-export interface RawIGUser {
-  interop_messaging_user_fbid: string;
-  username?: string;
-  full_name?: string;
-  profile_pic_url?: string | null;
-  is_verified?: boolean;
+export interface PlatformUser {
+  userId: string;
+  username: string | null;
+  displayName: string | null;
+  avatarUrl: string | null;
+  isVerified?: boolean;
+  platform: string;
 }
 
-/** Raw Instagram thread from GraphQL responses */
-export interface RawIGThread {
-  thread_fbid: string;
-  thread_title?: string;
-  thread_image_url?: string | null;
-  group_creator: { interop_messaging_user_fbid?: string };
-  is_group?: boolean;
-  is_muted?: boolean;
-  users?: RawIGUser[];
-  viewer?: { interop_messaging_user_fbid?: string };
-  slide_messages?: { edges: Array<{ node: RawIGMessage }> };
-}
-
-/** Raw Instagram message shape from GraphQL responses */
-export interface RawIGMessage {
-  id: string;
-  thread_fbid: string;
-  sender_fbid: string;
-  timestamp_ms: string | number;
-  content_type?: string;
-  text_body?: string;
-  replied_to_message_id?: string | null;
-  content?: Record<string, unknown>;
+export interface PlatformConversation {
+  conversationId: string;
+  platform: string;
+  title: string | null;
+  avatarUrl?: string | null;
+  createdByUserId?: string | null;
+  isGroup: boolean;
+  isMuted?: boolean;
 }

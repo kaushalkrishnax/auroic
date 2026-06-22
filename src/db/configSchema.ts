@@ -9,6 +9,7 @@ export const settingsTable = sqliteTable("settings", {
   router: text("router", { mode: "json" }),
   debug: text("debug", { mode: "json" }),
   instagram: text("instagram", { mode: "json" }),
+  discord: text("discord", { mode: "json" }),
   commands: text("commands", { mode: "json" }),
   tts: text("tts", { mode: "json" }),
   updatedAt: text("updated_at"),

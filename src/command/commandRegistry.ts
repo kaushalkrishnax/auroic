@@ -1,9 +1,3 @@
-import {
-  playMusic,
-  sendGIF,
-  sendSticker,
-  sendVoiceNote,
-} from "@/automation/chat.js";
 import type { ActionContext } from "@/types/index.js";
 import logger from "@/utils/logger.js";
 import {
@@ -41,7 +35,10 @@ const commandHandlers = {
 
     try {
       const title = context.classifiedCommand!.query.trim() || "funny";
-      const sent = await sendGIF(title, context.chatId, context.targetMessageId!);
+      const core = context.core;
+      const sent = core
+        ? await core.sendGIF(context.chatId, title, context.targetMessageId!)
+        : false;
       if (!sent) {
         throw new Error(`send_gif failed for query: ${title}`);
       }
@@ -64,11 +61,14 @@ const commandHandlers = {
 
     try {
       const title = context.classifiedCommand!.query.trim() || "funny";
-      const sent = await sendSticker(
-        title,
-        context.chatId,
-        context.targetMessageId!,
-      );
+      const core = context.core;
+      const sent = core
+        ? await core.sendSticker(
+            context.chatId,
+            title,
+            context.targetMessageId!,
+          )
+        : false;
       if (!sent) {
         throw new Error(`send_sticker failed for query: ${title}`);
       }
@@ -91,11 +91,14 @@ const commandHandlers = {
 
     try {
       const text = context.classifiedCommand!.query.trim();
-      const sent = await sendVoiceNote(
-        text,
-        context.chatId,
-        context.targetMessageId!,
-      );
+      const core = context.core;
+      const sent = core
+        ? await core.sendVoiceNote(
+            context.chatId,
+            text,
+            context.targetMessageId!,
+          )
+        : false;
       if (!sent) {
         throw new Error(`send_voice_note failed for query: ${text}`);
       }
@@ -118,8 +121,8 @@ const commandHandlers = {
 
     try {
       const query = context.classifiedCommand!.query.trim();
-
-      const sent = await playMusic(query);
+      const core = context.core;
+      const sent = core ? await core.playMusic(query, context.chatId) : false;
 
       if (!sent) {
         throw new Error(`play_music failed for query: ${query}`);

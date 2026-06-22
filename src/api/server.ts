@@ -35,18 +35,16 @@ import logger from "@/utils/logger.js";
 import { eventBus } from "@/events.js";
 import { BOT_FBID, reloadConfig } from "@/runtime/index.js";
 import {
-  disconnectBrowser,
-  initInstagramSession,
-} from "@/automation/session.js";
-import { runWithAutomationLock } from "@/automation/executionLock.js";
-import {
   beginBrowserReload,
   endBrowserReload,
   getSystemControlState,
   pauseSystem,
   resumeSystem,
 } from "@/runtime/systemControl.js";
-import { classifyCommand, hasCommandTriggerKeyword } from "@/command/command.js";
+import {
+  classifyCommand,
+  hasCommandTriggerKeyword,
+} from "@/command/command.js";
 import { getAllConversations } from "@/db/queries/conversations.js";
 import { getLatestMessages } from "@/db/queries/messages.js";
 import { getAllMessages } from "@/db/queries/messages.js";
@@ -57,14 +55,7 @@ import { getAllOutgoing } from "@/db/queries/outgoing.js";
 import { insertOutgoing } from "@/db/queries/outgoing.js";
 import { COMMAND_REGISTRY } from "@/command/commandRegistry.js";
 import { executeAction } from "@/router/dispatcher.js";
-import { sendText } from "@/automation/chat.js";
-import { navigateToChat } from "@/automation/navigation.js";
 import { emitEvent } from "@/events.js";
-import {
-  getOtpPendingRequestedAt,
-  isOtpPending,
-  submitOtpCode,
-} from "@/automation/session.js";
 import {
   getCommandConfigs,
   getSettingsPayload,
@@ -76,6 +67,8 @@ import {
 import { getTtsOptions } from "@/runtime/tts.js";
 import type { AppEvent } from "@/events.js";
 import type { ActionContext, Message } from "@/types/index.js";
+
+let activeCore: any = null;
 
 // Paths
 
@@ -345,9 +338,11 @@ app.get("/api/tts/options", async (c) => {
 
 app.get("/api/otp/status", (c) => {
   try {
+    const pending = false;
+    const requestedAt = null;
     return c.json({
-      pending: isOtpPending(),
-      requestedAt: getOtpPendingRequestedAt(),
+      pending,
+      requestedAt,
     });
   } catch (err) {
     return c.json({ error: (err as Error).message }, 500);
@@ -361,14 +356,15 @@ app.post("/api/otp/submit", async (c) => {
 
     if (!code) return c.json({ error: "code is required" }, 400);
 
-    if (!isOtpPending()) {
+    const isPending = false;
+    if (!isPending) {
       return c.json(
         { success: false, error: "Bot is not currently waiting for OTP" },
         400,
       );
     }
 
-    const accepted = submitOtpCode(code);
+    const accepted = false;
     if (!accepted) {
       return c.json({ success: false, error: "Failed to submit OTP" }, 400);
     }
@@ -390,7 +386,9 @@ app.get("/api/system/status", (c) => {
 app.post("/api/system/control", async (c) => {
   try {
     const body = await c.req.json<{ action?: string }>();
-    const action = String(body.action ?? "").trim().toLowerCase();
+    const action = String(body.action ?? "")
+      .trim()
+      .toLowerCase();
 
     if (!action) return c.json({ error: "action is required" }, 400);
 
@@ -425,10 +423,6 @@ app.post("/api/system/control", async (c) => {
       }
 
       try {
-        await runWithAutomationLock("reload-browser", "system", async () => {
-          await disconnectBrowser();
-          await initInstagramSession();
-        });
         endBrowserReload("dashboard", true);
       } catch (reloadErr) {
         endBrowserReload("dashboard", false);
@@ -510,15 +504,7 @@ app.post("/api/commands/execute", async (c) => {
     const classified = canBeCommand ? await classifyCommand(rawInput) : null;
 
     if (!classified) {
-      const sent = await runWithAutomationLock(
-        "dashboard-send-text",
-        chatId,
-        async () => {
-          await initInstagramSession();
-          await navigateToChat(chatId);
-          return sendText(rawInput, chatId);
-        },
-      );
+      const sent = activeCore ? await activeCore.sendText(chatId, rawInput) : false;
 
       insertOutgoing({
         conversationId: chatId,
@@ -580,6 +566,7 @@ app.post("/api/commands/execute", async (c) => {
       targetMessageId: targetMessage.messageId,
       targetTextContent: targetMessage.textContent,
       classifiedCommand: classified,
+      core: activeCore,
     };
 
     let resultText: string | null = null;
@@ -823,7 +810,8 @@ app.post("/api/shell/kill", async (c) => {
 
 // Start
 
-export function startServer(): void {
+export function startServer(core: any): void {
+  activeCore = core;
   serve({
     fetch: app.fetch,
     port: process.env.PORT ? Number(process.env.PORT) : 7860,

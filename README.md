@@ -207,14 +207,14 @@ Auroic uses a local **Kokoro ONNX FastAPI service** for TTS at `http://localhost
 
 ### Prerequisites
 
-| Requirement         | Version/Details                                 |
-| ------------------- | ----------------------------------------------- |
-| Node.js             | ≥ 20 LTS                                        |
-| Ollama              | Local router inference service (`ollama serve`) |
-| Router Model        | `auroic-router:latest` in Ollama (**Required**) |
+| Requirement         | Version/Details                                    |
+| ------------------- | -------------------------------------------------- |
+| Node.js             | ≥ 20 LTS                                           |
+| Ollama              | Local router inference service (`ollama serve`)    |
+| Router Model        | `auroic-router:latest` in Ollama (**Required**)    |
 | TTS Runtime         | Local FastAPI service (`models/kokoro_tts/app.py`) |
-| Docker              | ≥ 24 _(optional)_                               |
-| PipeWire/PulseAudio | Required for TTS voice note recording (Linux)   |
+| Docker              | ≥ 24 _(optional)_                                  |
+| PipeWire/PulseAudio | Required for TTS voice note recording (Linux)      |
 
 ---
 

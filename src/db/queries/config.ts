@@ -38,6 +38,7 @@ export interface RuntimeSettingsPayload {
     logRouterWindow: boolean;
   };
   instagram: Record<string, unknown>;
+  discord: Record<string, unknown>;
   tts: {
     voice: string;
     model: string;
@@ -116,6 +117,7 @@ Hard Rules (CRITICAL):
   },
 
   instagram: {},
+  discord: {},
 
   tts: {
     voice: "hm_omega",
@@ -182,6 +184,7 @@ export function getSettingsPayload(): RuntimeSettingsPayload {
     router,
     debug: (row.debug as any) ?? DEFAULT_RUNTIME_SETTINGS.debug,
     instagram: (row.instagram as any) ?? DEFAULT_RUNTIME_SETTINGS.instagram,
+    discord: (row.discord as any) ?? DEFAULT_RUNTIME_SETTINGS.discord,
     tts: normalizeTtsSettings(row.tts),
   };
 }

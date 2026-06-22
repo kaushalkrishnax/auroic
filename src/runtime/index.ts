@@ -19,6 +19,7 @@ const env = {
   aiKey: process.env.AI_API_KEY ?? "",
   igUsername: process.env.INSTAGRAM_USERNAME ?? "",
   igPassword: process.env.INSTAGRAM_PASSWORD ?? "",
+  discordToken: process.env.DISCORD_TOKEN ?? "",
   dbPath: process.env.DB_PATH ?? "./data/state.db",
   configDbPath: process.env.CONFIG_DB_PATH ?? "./data/config.db",
 };
@@ -81,6 +82,16 @@ export function getConfig() {
     ? igSettings.chatIds.map((value) => String(value).trim()).filter(Boolean)
     : [];
 
+  const discordSettings = (runtimeSettings.discord ?? {}) as Record<
+    string,
+    unknown
+  >;
+  const discordAllowedChannels = Array.isArray(discordSettings.allowedChannels)
+    ? discordSettings.allowedChannels.map((value) => String(value).trim()).filter(Boolean)
+    : (process.env.DISCORD_ALLOWED_CHANNELS
+        ? process.env.DISCORD_ALLOWED_CHANNELS.split(",").map((v) => v.trim()).filter(Boolean)
+        : []);
+
   return {
     chromium: {
       profileDir: env.chromiumProfileDir,
@@ -91,6 +102,11 @@ export function getConfig() {
       username: env.igUsername,
       password: env.igPassword,
       chatIds: igChatIds,
+    },
+    discord: {
+      ...discordSettings,
+      token: env.discordToken || (discordSettings.token as string) || "",
+      allowedChannels: discordAllowedChannels,
     },
     triggers: runtimeSettings.triggers,
     llm: {

@@ -4,7 +4,6 @@
  */
 
 import logger from "@/utils/logger.js";
-import { sendText } from "@/automation/chat.js";
 import { generateReply } from "@/llm/generate.js";
 import type { ActionContext } from "@/types/index.js";
 
@@ -47,11 +46,14 @@ export async function executeText(
       preview: replyText.slice(0, 80),
     });
 
-    const sent = await sendText(
-      replyText,
-      chatId,
-      context.targetMessageId ?? undefined,
-    );
+    const core = context.core;
+    const sent = core
+      ? await core.sendText(
+          chatId,
+          replyText,
+          context.targetMessageId ?? undefined,
+        )
+      : false;
 
     if (!sent) {
       logger.warn("Text action skipped: target unavailable or send failed", {

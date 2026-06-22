@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS settings (
   router TEXT,
   debug TEXT,
   instagram TEXT,
+  discord TEXT,
   commands TEXT,
   tts TEXT,
   updated_at TEXT
@@ -84,6 +85,9 @@ function ensureSettingsColumns(sqlite: SQLiteConnection): void {
 
   if (!columnSet.has("tts")) {
     sqlite.exec("ALTER TABLE settings ADD COLUMN tts TEXT");
+  }
+  if (!columnSet.has("discord")) {
+    sqlite.exec("ALTER TABLE settings ADD COLUMN discord TEXT");
   }
 }
 

@@ -6,7 +6,6 @@
 
 import logger from "@/utils/logger.js";
 import type { ActionContext } from "@/types/index.js";
-import { sendStickerOrGIF } from "@/automation/chat.js";
 
 export async function executeMedia(
   context: ActionContext,
@@ -16,11 +15,14 @@ export async function executeMedia(
   const query = title || "funny";
   logger.info("Action: media", { chatId: context.chatId, query });
 
-  const sent = await sendStickerOrGIF(
-    query,
-    context.chatId,
-    context.targetMessageId ?? undefined,
-  );
+  const core = context.core;
+  const sent = core
+    ? await core.sendMedia(
+        context.chatId,
+        query,
+        context.targetMessageId ?? undefined,
+      )
+    : false;
 
   if (!sent) {
     logger.warn("Media action skipped: target unavailable or media not found", {

@@ -13,16 +13,12 @@
 import { getMessageByMid, getLatestMessages } from "@/db/queries/messages.js";
 import { insertOutgoing } from "@/db/queries/outgoing.js";
 import { getConversationById } from "@/db/queries/conversations.js";
-import { attachDataMidToDOM, stampInitialDataMids } from "@/automation/chat.js";
-import { initInstagramSession } from "@/automation/session.js";
-import { navigateToChat } from "@/automation/navigation.js";
 import { invokeRouter } from "@/router/router.js";
 import {
   classifyCommand,
   hasCommandTriggerKeyword,
 } from "@/command/command.js";
 import { executeAction } from "@/router/dispatcher.js";
-import { runWithAutomationLock } from "@/automation/executionLock.js";
 import { emitEvent } from "@/events.js";
 import logger from "@/utils/logger.js";
 import getConfig from "@/runtime/index.js";
@@ -171,13 +167,14 @@ function getConversationState(chatId: string): ConversationState {
 }
 
 function scheduleCandidateProcessing(
+  core: any,
   chatId: string,
   state: ConversationState,
 ): void {
   if (state.batchTimeout) return;
   state.batchTimeout = setTimeout(() => {
     state.batchTimeout = null;
-    void processCandidates(chatId);
+    void processCandidates(core, chatId);
   }, BATCH_TIMEOUT_MS);
 }
 
@@ -230,7 +227,7 @@ function getPassiveMonitoringConfig() {
   return getConfig().triggers.passiveMonitoring;
 }
 
-function trackPassiveMessage(chatId: string, mid: string): void {
+function trackPassiveMessage(core: any, chatId: string, mid: string): void {
   const passive = getPassiveMonitoringConfig();
   if (!passive?.enabled) return;
 
@@ -255,7 +252,7 @@ function trackPassiveMessage(chatId: string, mid: string): void {
       state.passiveFlushTimer = null;
     }
 
-    void processPassiveBatch(chatId);
+    void processPassiveBatch(core, chatId);
     return;
   }
 
@@ -273,7 +270,7 @@ function trackPassiveMessage(chatId: string, mid: string): void {
 
       if (state.unprocessedMids.size === 0) return;
 
-      void processPassiveBatch(chatId);
+      void processPassiveBatch(core, chatId);
     }, delayMs);
   }
 }
@@ -281,7 +278,7 @@ function trackPassiveMessage(chatId: string, mid: string): void {
 function getCandidateContent(
   msg: Message,
   botId: string,
-  chatId: string
+  chatId: string,
 ): CandidateContentResult {
   const config = getConfig();
   const trigger = detectTrigger(msg.textContent ?? "", config);
@@ -314,9 +311,7 @@ function getCandidateContent(
   return { content: text, isDirectMention };
 }
 
-function resolveTargetCandidateIndex(
-  target: string | null
-): number | null {
+function resolveTargetCandidateIndex(target: string | null): number | null {
   if (!target) return null;
   const match = target.match(/^C(\d+)$/i);
   if (!match) return null;
@@ -349,7 +344,7 @@ function buildRouterCandidateSlots(candidateTexts: string[]): {
   };
 }
 
-async function processPassiveBatch(chatId: string): Promise<void> {
+async function processPassiveBatch(core: any, chatId: string): Promise<void> {
   const passiveConfig = getPassiveMonitoringConfig();
   if (!passiveConfig?.enabled) return;
 
@@ -370,11 +365,7 @@ async function processPassiveBatch(chatId: string): Promise<void> {
       totalWindow,
     });
 
-    await runWithAutomationLock("passive-prepare", chatId, async () => {
-      await initInstagramSession();
-      await navigateToChat(chatId);
-      await stampInitialDataMids(chatId, totalWindow);
-    });
+    // No preparation needed for Discord client
 
     // Build router window from DB so candidates are anchored to newly tracked
     // passive mids, not whichever messages happen to be visible in the DOM.
@@ -394,10 +385,13 @@ async function processPassiveBatch(chatId: string): Promise<void> {
 
     // Check for higher priority tasks before processing
     if (hasHigherPriorityTask(chatId)) {
-      logger.info("Passive batch: higher priority task detected, yielding control", {
-        chatId,
-        currentPriority: AutomationPriority.PASSIVE,
-      });
+      logger.info(
+        "Passive batch: higher priority task detected, yielding control",
+        {
+          chatId,
+          currentPriority: AutomationPriority.PASSIVE,
+        },
+      );
       return;
     }
 
@@ -503,9 +497,7 @@ async function processPassiveBatch(chatId: string): Promise<void> {
       return;
     }
 
-    const targetIndex = resolveTargetCandidateIndex(
-      decision.target
-    );
+    const targetIndex = resolveTargetCandidateIndex(decision.target);
 
     if (
       targetIndex === null ||
@@ -575,7 +567,7 @@ async function processPassiveBatch(chatId: string): Promise<void> {
       return;
     }
 
-    await attachDataMidToDOM(chatId, targetMid);
+    // No DOM stamping needed for Discord client
 
     const context: ActionContext = {
       chatId,
@@ -586,6 +578,7 @@ async function processPassiveBatch(chatId: string): Promise<void> {
       targetMessageId: targetMid,
       targetTextContent: targetCandidate.textContent ?? "",
       classifiedCommand: classifiedCommand ?? undefined,
+      core,
     };
 
     let resultText: string | null = null;
@@ -668,7 +661,7 @@ function normalizeRouterDecision(decision: RouterDecision): RouterDecision {
   return decision;
 }
 
-async function processCandidates(chatId: string): Promise<void> {
+async function processCandidates(core: any, chatId: string): Promise<void> {
   const config = getConfig();
   const state = getConversationState(chatId);
 
@@ -688,12 +681,12 @@ async function processCandidates(chatId: string): Promise<void> {
     for (const priority of priorityLevels) {
       // Filter candidates for this priority level
       const candidatesForPriority = state.candidates.filter(
-        (c) => c.priority === priority
+        (c) => c.priority === priority,
       );
 
       // Remove processed candidates from the main queue
       state.candidates = state.candidates.filter(
-        (c) => c.priority !== priority
+        (c) => c.priority !== priority,
       );
 
       // Process all candidates for this priority level
@@ -806,6 +799,7 @@ async function processCandidates(chatId: string): Promise<void> {
             targetMessageId: msg.messageId,
             targetTextContent: msg.textContent,
             classifiedCommand: classifiedCommand || undefined,
+            core,
           };
 
           let resultText: string | null = null;
@@ -871,7 +865,7 @@ async function processCandidates(chatId: string): Promise<void> {
   if (state.candidates.length > 0 && !state.batchTimeout) {
     state.batchTimeout = setTimeout(() => {
       state.batchTimeout = null;
-      void processCandidates(chatId);
+      void processCandidates(core, chatId);
     }, 0);
   }
 }
@@ -879,11 +873,12 @@ async function processCandidates(chatId: string): Promise<void> {
 // Process a single message
 
 export async function processMessage(
+  core: any,
   chatId: string,
   mid: string,
 ): Promise<void> {
   const config = getConfig();
-  const botId = config.instagram.fbId ?? "";
+  const botId = core.getCoreContext?.().getBotFbid() ?? "";
 
   const msg = getMessageByMid(mid);
   if (!msg) {
@@ -907,7 +902,7 @@ export async function processMessage(
     );
 
     if (!isDirectMention) {
-      trackPassiveMessage(chatId, mid);
+      trackPassiveMessage(core, chatId, mid);
       return;
     }
 
@@ -932,17 +927,17 @@ export async function processMessage(
     while (state.candidates.length > BATCH_HARD_LIMIT) {
       // Remove lowest priority candidates first to maintain priority ordering
       const lowestPriority = Math.min(
-        ...state.candidates.map((c) => c.priority)
+        ...state.candidates.map((c) => c.priority),
       );
       const candidatesToRemove = state.candidates.filter(
-        (c) => c.priority === lowestPriority
+        (c) => c.priority === lowestPriority,
       );
 
       // Remove from the front of the queue to preserve FIFO within priority
       const removed = candidatesToRemove.shift();
       if (removed) {
         state.candidates = state.candidates.filter(
-          (c) => c.messageId !== removed.messageId
+          (c) => c.messageId !== removed.messageId,
         );
         logger.warn("Dropped queued message due queue cap", {
           chatId,
@@ -965,11 +960,11 @@ export async function processMessage(
         clearTimeout(state.batchTimeout);
         state.batchTimeout = null;
       }
-      await processCandidates(chatId);
+      await processCandidates(core, chatId);
       return;
     }
 
-    scheduleCandidateProcessing(chatId, state);
+    scheduleCandidateProcessing(core, chatId, state);
   } catch (err) {
     logger.error("Error processing message", {
       chatId,

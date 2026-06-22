@@ -1,5 +1,9 @@
 import getConfig from "@/runtime/index.js";
-import { chatCompletion, ChatMessage, resolveModel as resolveLlmModel } from "@/llm/client.js";
+import {
+  chatCompletion,
+  ChatMessage,
+  resolveModel as resolveLlmModel,
+} from "@/llm/client.js";
 
 const DEFAULT_BASE_URL = "http://localhost:8880";
 const DEFAULT_MODEL = "tts-1";
@@ -8,15 +12,15 @@ const TIMEOUT_MS = 5000;
 const DEFAULT_LANG = "und";
 
 const LANGUAGE_DEFAULT_VOICES: Record<string, string> = {
-  "en": "af_sarah",
+  en: "af_sarah",
   "en-us": "af_sarah",
   "en-gb": "bf_lily",
-  "es": "ef_dora",
-  "fr": "ff_siwis",
-  "hi": "hf_beta",
-  "ja": "jf_gongitsune",
-  "pt": "pf_dora",
-  "zh": "zf_xiaoxiao",
+  es: "ef_dora",
+  fr: "ff_siwis",
+  hi: "hf_beta",
+  ja: "jf_gongitsune",
+  pt: "pf_dora",
+  zh: "zf_xiaoxiao",
   "zh-cn": "zf_xiaoxiao",
 };
 
@@ -30,7 +34,10 @@ export interface TtsOptions {
 }
 
 function getEndpoint(path: string): string {
-  const base = process.env.TTS_API_URL || process.env.KOKORO_TTS_API_URL || DEFAULT_BASE_URL;
+  const base =
+    process.env.TTS_API_URL ||
+    process.env.KOKORO_TTS_API_URL ||
+    DEFAULT_BASE_URL;
   return new URL(path, base).toString();
 }
 
@@ -38,12 +45,15 @@ function getEndpoint(path: string): string {
 async function fetchList(path: string): Promise<string[]> {
   try {
     const res = await fetch(getEndpoint(path), {
-      signal: AbortSignal.timeout(TIMEOUT_MS)
+      signal: AbortSignal.timeout(TIMEOUT_MS),
     });
 
     if (!res.ok) return [];
 
-    const { data, voices } = (await res.json()) as { data?: any[]; voices?: any[] };
+    const { data, voices } = (await res.json()) as {
+      data?: any[];
+      voices?: any[];
+    };
     const rawList = data || voices || [];
 
     const extracted = rawList
@@ -68,8 +78,10 @@ export async function getTtsOptions(): Promise<TtsOptions> {
   ]);
 
   // Ensure default values exist in the lists if we retrieved anything
-  if (voices.length > 0 && !voices.includes(defaultVoice)) voices.unshift(defaultVoice);
-  if (models.length > 0 && !models.includes(defaultModel)) models.unshift(defaultModel);
+  if (voices.length > 0 && !voices.includes(defaultVoice))
+    voices.unshift(defaultVoice);
+  if (models.length > 0 && !models.includes(defaultModel))
+    models.unshift(defaultModel);
 
   return {
     defaultVoice,
@@ -82,7 +94,8 @@ export async function getTtsOptions(): Promise<TtsOptions> {
 function resolveVoiceForLanguage(lang: string): string | null {
   const normalized = lang.trim().toLowerCase();
   if (!normalized) return null;
-  if (LANGUAGE_DEFAULT_VOICES[normalized]) return LANGUAGE_DEFAULT_VOICES[normalized];
+  if (LANGUAGE_DEFAULT_VOICES[normalized])
+    return LANGUAGE_DEFAULT_VOICES[normalized];
   const base = normalized.split("-")[0];
   return LANGUAGE_DEFAULT_VOICES[base] ?? null;
 }
@@ -122,7 +135,10 @@ async function detectLanguageAndNormalizeText(text: string): Promise<{
   }
 }
 
-export async function generateSpeechBuffer(text: string, voice?: TtsVoice): Promise<Buffer> {
+export async function generateSpeechBuffer(
+  text: string,
+  voice?: TtsVoice,
+): Promise<Buffer> {
   if (!text?.trim()) throw new Error("Invalid text input for TTS");
 
   const config = getConfig();
@@ -132,9 +148,9 @@ export async function generateSpeechBuffer(text: string, voice?: TtsVoice): Prom
   const selectedVoice =
     (configuredVoice && configuredVoice.toLowerCase() !== "auto"
       ? configuredVoice
-      : languageVoice) ||
-    DEFAULT_VOICE;
-  const selectedModel = process.env.TTS_MODEL?.trim() || config.tts?.model?.trim() || DEFAULT_MODEL;
+      : languageVoice) || DEFAULT_VOICE;
+  const selectedModel =
+    process.env.TTS_MODEL?.trim() || config.tts?.model?.trim() || DEFAULT_MODEL;
 
   try {
     const res = await fetch(getEndpoint("/v1/audio/speech"), {
@@ -153,6 +169,8 @@ export async function generateSpeechBuffer(text: string, voice?: TtsVoice): Prom
 
     return Buffer.from(await res.arrayBuffer());
   } catch (err) {
-    throw new Error(`TTS request failed: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(
+      `TTS request failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }
