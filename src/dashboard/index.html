@@ -12,19 +12,19 @@
     <script src="https://unpkg.com/lucide@v0/dist/umd/lucide.min.js"></script>
     <style>
       :root {
-        --bg: #090b12;
-        --bg-soft: #0f1320;
-        --surface: #12182a;
-        --surface-2: #192136;
-        --border: #273149;
-        --muted: #51607f;
-        --text: #f3f6ff;
-        --subtle: #a0afcf;
-        --accent: #ff4f84;
-        --accent-2: #a85c26;
-        --green: #4ec08f;
-        --red: #ff5e6d;
-        --yellow: #ffc062;
+        --bg: #313338;
+        --bg-soft: #2b2d31;
+        --surface: #1e1f22;
+        --surface-2: #35373c;
+        --border: #3f4147;
+        --muted: #949ba4;
+        --text: #f2f3f5;
+        --subtle: #949ba4;
+        --accent: #5865f2;
+        --accent-2: #4752c4;
+        --green: #23a55a;
+        --red: #f23f43;
+        --yellow: #f0b232;
         --mono: "JetBrains Mono", monospace;
         --sans: "Sora", sans-serif;
         --sidebar-w: 248px;
@@ -43,18 +43,7 @@
 
       body {
         font-family: var(--sans);
-        background:
-          radial-gradient(
-            circle at 20% -10%,
-            rgba(255, 79, 132, 0.12),
-            transparent 40%
-          ),
-          radial-gradient(
-            circle at 85% 5%,
-            rgba(255, 143, 63, 0.11),
-            transparent 36%
-          ),
-          linear-gradient(180deg, #0a0d18 0%, #07090f 100%);
+        background: var(--bg);
         color: var(--text);
         display: flex;
         height: 100vh;
@@ -66,11 +55,7 @@
       aside {
         width: var(--sidebar-w);
         flex-shrink: 0;
-        background: linear-gradient(
-          180deg,
-          rgba(25, 33, 54, 0.9),
-          rgba(16, 22, 38, 0.95)
-        );
+        background: var(--bg-soft);
         border-right: 1px solid var(--border);
         display: flex;
         flex-direction: column;
@@ -87,11 +72,7 @@
         position: sticky;
         top: 0;
         z-index: 10;
-        background: linear-gradient(
-          180deg,
-          rgba(25, 33, 54, 0.95),
-          rgba(16, 22, 38, 0.95)
-        );
+        background: var(--bg-soft);
       }
 
       .sidebar-logo span {
@@ -169,7 +150,7 @@
       }
 
       .nav-badge {
-        background: linear-gradient(90deg, var(--accent), var(--accent-2));
+        background: var(--accent);
         color: #fff;
         font-size: 10px;
         font-family: var(--mono);
@@ -213,8 +194,7 @@
 
       .topbar {
         height: 60px;
-        background: rgba(15, 19, 32, 0.9);
-        backdrop-filter: blur(6px);
+        background: var(--bg);
         border-bottom: 1px solid var(--border);
         display: flex;
         align-items: center;
@@ -246,7 +226,7 @@
       }
 
       .btn {
-        background: linear-gradient(90deg, var(--accent), var(--accent-2));
+        background: var(--accent);
         color: #fff;
         border: none;
         border-radius: 999px;
@@ -369,7 +349,7 @@
       .otp-submit {
         border: none;
         border-radius: 999px;
-        background: linear-gradient(90deg, #ff9b4a, #ff4f84);
+        background: var(--accent);
         color: #fff;
         font-size: 11px;
         font-family: var(--mono);
@@ -594,11 +574,7 @@
       }
 
       .config-nav-item.active {
-        background: linear-gradient(
-          90deg,
-          rgba(255, 79, 132, 0.22),
-          rgba(255, 143, 63, 0.1)
-        );
+        background: rgba(88, 101, 242, 0.15);
         color: #fff;
       }
 
@@ -821,12 +797,8 @@
       }
 
       .msg-bubble.outgoing {
-        background: linear-gradient(
-          120deg,
-          rgba(255, 79, 132, 0.16),
-          rgba(255, 143, 63, 0.12)
-        );
-        border-color: rgba(255, 143, 63, 0.26);
+        background: rgba(88, 101, 242, 0.15);
+        border-color: rgba(88, 101, 242, 0.3);
         margin-left: auto;
       }
 
@@ -852,12 +824,12 @@
         overflow: hidden;
       }
 
-      /* Instagram View */
+      /* Discord View */
       .live-root {
         display: flex;
         flex-direction: column;
         height: 100%;
-        background: #000;
+        background: var(--bg);
       }
 
       .live-shell {
@@ -865,20 +837,20 @@
         grid-template-columns: 360px 1fr;
         flex: 1;
         overflow: hidden;
-        background: #000;
+        background: var(--bg);
       }
 
       .live-inbox-pane {
-        border-right: 1px solid #262626;
+        border-right: 1px solid var(--border);
         display: flex;
         flex-direction: column;
         overflow: hidden;
-        background: #000;
+        background: var(--bg-soft);
       }
 
       .live-inbox-header {
         padding: 14px 16px 10px;
-        border-bottom: 1px solid #262626;
+        border-bottom: 1px solid var(--border);
       }
 
       .live-inbox-username {
@@ -910,11 +882,11 @@
       }
 
       .live-chat-row:hover {
-        background: #1a1a1a;
+        background: var(--surface-2);
       }
 
       .live-chat-row.active {
-        background: #1a1a1a;
+        background: var(--surface);
       }
 
       .live-avatar {
@@ -928,14 +900,7 @@
         color: #fff;
         flex-shrink: 0;
         overflow: hidden;
-        background: linear-gradient(
-          45deg,
-          #f09433 0%,
-          #e6683c 25%,
-          #dc2743 50%,
-          #cc2366 75%,
-          #bc1888 100%
-        );
+        background: var(--accent);
       }
 
       .live-chat-info {
@@ -975,7 +940,7 @@
       }
 
       .live-unread {
-        background: #0095f6;
+        background: var(--red);
         color: #fff;
         min-width: 20px;
         text-align: center;
@@ -989,7 +954,7 @@
         display: flex;
         flex-direction: column;
         overflow: hidden;
-        background: #000;
+        background: var(--bg);
       }
 
       .live-thread-header {
@@ -997,7 +962,7 @@
         align-items: center;
         gap: 12px;
         padding: 10px 16px;
-        border-bottom: 1px solid #262626;
+        border-bottom: 1px solid var(--border);
         flex-shrink: 0;
       }
 
@@ -1005,14 +970,7 @@
         width: 44px;
         height: 44px;
         border-radius: 50%;
-        background: linear-gradient(
-          45deg,
-          #f09433 0%,
-          #e6683c 25%,
-          #dc2743 50%,
-          #cc2366 75%,
-          #bc1888 100%
-        );
+        background: var(--accent);
         display: grid;
         place-items: center;
         font-size: 13px;
@@ -1093,14 +1051,7 @@
         width: 28px;
         height: 28px;
         border-radius: 50%;
-        background: linear-gradient(
-          45deg,
-          #f09433 0%,
-          #e6683c 25%,
-          #dc2743 50%,
-          #cc2366 75%,
-          #bc1888 100%
-        );
+        background: var(--accent);
         display: grid;
         place-items: center;
         font-size: 9px;
@@ -1196,7 +1147,7 @@
       }
 
       .live-reply-quote.source-incoming {
-        background: #1d2026;
+        background: var(--surface);
       }
 
       .live-reply-quote.source-incoming::before {
@@ -1204,7 +1155,7 @@
       }
 
       .live-reply-quote.source-outgoing {
-        background: #3745b5;
+        background: rgba(88, 101, 242, 0.2);
       }
 
       .live-bubble {
@@ -1216,7 +1167,7 @@
         white-space: pre-wrap;
         overflow-wrap: break-word;
         color: #fff;
-        background: #25292e;
+        background: var(--surface-2);
         max-width: 550px;
         width: fit-content;
       }
@@ -1235,7 +1186,7 @@
       }
 
       .live-bubble.out {
-        background: #4a5df9;
+        background: var(--accent);
         color: #fff;
       }
 
@@ -1306,31 +1257,31 @@
       }
 
       .live-activity {
-        border-top: 1px solid #1a1a1a;
+        border-top: 1px solid var(--border);
         padding: 6px 16px;
         display: flex;
         gap: 6px;
         flex-wrap: nowrap;
         overflow-x: auto;
-        background: #000;
+        background: var(--bg);
         flex-shrink: 0;
       }
 
       .live-command-bar {
-        border-top: 1px solid #1a1a1a;
+        border-top: 1px solid var(--border);
         padding: 10px 12px;
         display: flex;
         align-items: center;
         gap: 8px;
-        background: #000;
+        background: var(--bg);
         flex-shrink: 0;
       }
 
       .live-command-input {
         flex: 1;
         min-width: 0;
-        background: #121212;
-        border: 1px solid #2a2a2a;
+        background: var(--surface);
+        border: 1px solid var(--border);
         color: #fff;
         border-radius: 999px;
         padding: 10px 14px;
@@ -1340,13 +1291,13 @@
 
       .live-command-input:focus {
         outline: none;
-        border-color: #4a5df9;
+        border-color: var(--accent);
       }
 
       .live-command-send {
-        border: 1px solid #2d3555;
+        border: 1px solid var(--accent);
         color: #fff;
-        background: #3745b5;
+        background: var(--accent);
         border-radius: 999px;
         padding: 9px 14px;
         font-size: 12px;
@@ -1366,7 +1317,7 @@
         font-family: var(--mono);
         min-height: 14px;
         padding: 0 14px 8px;
-        background: #000;
+        background: var(--bg);
         flex-shrink: 0;
       }
 
@@ -2004,7 +1955,7 @@
           ><span>Overview</span>
         </div>
         <div class="nav-item" data-view="live">
-          <i data-lucide="instagram" class="icon"></i><span>Instagram</span
+          <i data-lucide="discord" class="icon"></i><span>Discord</span
           ><span class="nav-badge" id="badge-live">0</span>
         </div>
         <div class="nav-item" data-view="conversations">
@@ -2195,7 +2146,7 @@
           reactions: "Reactions",
           outgoing: "Outgoing",
           commands: "Commands",
-          live: "Instagram",
+          live: "Discord",
           router: "Router Feed",
           config: "Runtime Config",
           shell: "Shell",
@@ -2811,8 +2762,8 @@
 
       function renderChats() {
         const enabledChatIds = new Set(
-          Array.isArray(state.config?.instagram?.chatIds)
-            ? state.config.instagram.chatIds
+          Array.isArray(state.config?.discord?.allowedChannels)
+            ? state.config.discord.allowedChannels
                 .map((v) => String(v).trim())
                 .filter(Boolean)
             : [],
@@ -2857,7 +2808,7 @@
 
       function renderChatDetail() {
         const msgs = state.chatMessages;
-        const botId = state.config?.instagram?.fbId;
+        const botId = state.config?.discord?.clientUserId || state.config?.instagram?.fbId;
         return `
 <button class="breadcrumb" onclick="state.chatDetailId=null; setView('conversations')">← Back to conversations</button>
 <br/><br/>
@@ -3030,7 +2981,7 @@
           if (!prev || m.timestampMs > prev.timestampMs)
             recentByChat.set(m.conversationId, m);
         }
-        const botId = state.config?.instagram?.fbId;
+        const botId = state.config?.discord?.clientUserId || state.config?.instagram?.fbId;
         return state.conversations
           .map((c) => {
             const recent = recentByChat.get(c.conversationId);
@@ -3282,7 +3233,7 @@
           selectedChat?.title ||
           chats.find((c) => c.id === selected)?.title ||
           "Direct Messages";
-        const botId = state.config?.instagram?.fbId;
+        const botId = state.config?.discord?.clientUserId || state.config?.instagram?.fbId;
         const groups = selected
           ? buildMessageGroups(state.liveMessages, botId)
           : [];
@@ -3337,7 +3288,7 @@ ${
     <div class="live-thread-avatar">${selectedChat?.avatarUrl ? `<img src="${esc(selectedChat.avatarUrl)}" style="width:100%;height:100%;object-fit:cover">` : esc(initials(selectedTitle))}</div>
     <div>
       <div class="live-thread-name">${esc(selectedTitle)}</div>
-      <div class="live-thread-status">Instagram · text and command send enabled</div>
+      <div class="live-thread-status">Discord · text and command send enabled</div>
     </div>
   </div>
   <div class="live-msg-scroll" id="liveMsgScroll">
@@ -3376,11 +3327,11 @@ ${
       }
 
       function initials(name) {
-        const parts = String(name || "IG")
+        const parts = String(name || "DC")
           .trim()
           .split(/\s+/)
           .slice(0, 2);
-        return parts.map((p) => p[0]?.toUpperCase() || "").join("") || "IG";
+        return parts.map((p) => p[0]?.toUpperCase() || "").join("") || "DC";
       }
       function formatTime(ts) {
         return new Date(ts).toLocaleTimeString([], {
@@ -3845,8 +3796,8 @@ ${
           if (inputEl) inputEl.checked = !isEnabled;
           return;
         }
-        const prevIds = Array.isArray(state.config?.instagram?.chatIds)
-          ? state.config.instagram.chatIds
+        const prevIds = Array.isArray(state.config?.discord?.allowedChannels)
+          ? state.config.discord.allowedChannels
               .map((v) => String(v).trim())
               .filter(Boolean)
           : [];
@@ -3868,9 +3819,9 @@ ${
             ? []
             : nextIds;
         const nextConfig = JSON.parse(JSON.stringify(state.config));
-        if (!nextConfig.instagram || typeof nextConfig.instagram !== "object")
-          nextConfig.instagram = {};
-        nextConfig.instagram.chatIds = normalizedNextIds;
+        if (!nextConfig.discord || typeof nextConfig.discord !== "object")
+          nextConfig.discord = {};
+        nextConfig.discord.allowedChannels = normalizedNextIds;
         try {
           const r = await fetch("/config", {
             method: "POST",

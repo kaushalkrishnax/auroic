@@ -178,10 +178,11 @@ app.get("/config", async (c) => {
   try {
     const settings = getSettingsPayload();
     const config: Record<string, unknown> = { ...settings };
-    config.instagram = {
-      ...((config.instagram as Record<string, unknown>) ?? {}),
-      fbId: BOT_FBID,
+    config.discord = {
+      ...((config.discord as Record<string, unknown>) ?? {}),
+      clientUserId: BOT_FBID,
     };
+    delete config.instagram;
     return c.json(config);
   } catch (err) {
     logger.error("Failed to read config", { error: (err as Error).message });

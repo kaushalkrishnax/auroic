@@ -16,7 +16,6 @@ services:
       - NODE_ENV=production
       - DB_PATH=/app/data/state.db
       - CONFIG_DB_PATH=/app/data/config.db
-      - CHROMIUM_PROFILE_DIR=/app/data/chrome-auroic
       - XDG_RUNTIME_DIR=/tmp/runtime-auroic
       - NODE_OPTIONS=--max-old-space-size=512
       - PORT=7860

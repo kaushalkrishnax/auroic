@@ -3,12 +3,8 @@ FROM node:20-slim AS builder
 
 WORKDIR /app
 
-ENV PLAYWRIGHT_BROWSERS_PATH=/app/ms-playwright
-
 COPY package.json package-lock.json* ./
 RUN npm ci
-
-RUN npx playwright install chromium-headless-shell
 
 COPY tsconfig.json ./
 COPY src ./src
@@ -24,7 +20,6 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV PORT=7860
-ENV PLAYWRIGHT_BROWSERS_PATH=/app/ms-playwright
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -38,9 +33,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
     
 COPY --from=builder /app /app
-
-RUN npx playwright install-deps chromium-headless-shell \
-    && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL https://ollama.com/install.sh | sh
 
