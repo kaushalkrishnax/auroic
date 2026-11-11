@@ -1,11 +1,13 @@
 import logger from "@/utils/logger.js";
 
-let queueTail: Promise<void> = Promise.resolve();
-
 /**
- * Serializes browser automation steps (navigation/sending/reactions/media)
- * so concurrent pipeline paths cannot race against each other.
+ * Per-chat serialization for browser automation steps.
+ *
+ * Actions for the same chat run one at a time, while different chats can run
+ * independently on their own assigned tabs.
  */
+const queues = new Map<string, Promise<void>>();
+
 export async function runWithAutomationLock<T>(
   label: string,
   chatId: string,
@@ -20,8 +22,9 @@ export async function runWithAutomationLock<T>(
     release = resolve;
   });
 
-  const previous = queueTail;
-  queueTail = previous.finally(() => gate);
+  const previous = queues.get(chatId) ?? Promise.resolve();
+  const current = previous.then(() => gate);
+  queues.set(chatId, current);
 
   await previous;
 
@@ -31,6 +34,8 @@ export async function runWithAutomationLock<T>(
     return await task();
   } finally {
     release();
+    if (queues.get(chatId) === current) queues.delete(chatId);
+
     const heldForMs = Date.now() - startedAt;
     const releaseDetails = {
       label,

@@ -1,6 +1,6 @@
 import type { Locator, Page } from "playwright-core";
 import { find } from "node-emoji";
-import { getPage } from "@/automation/session.js";
+import { getAssignedPage, requireChatPage } from "@/automation/tabPool.js";
 import { getLatestMessages, getMessageByMid } from "@/db/queries/messages.js";
 import { getUserByFbid } from "@/db/queries/users.js";
 import SELECTORS from "@/instagram/selectors.js";
@@ -16,11 +16,8 @@ export interface DomMessageSnapshot {
 }
 
 function isTargetChatOpen(chatId: string): boolean {
-  try {
-    return getPage().url().includes(`/direct/t/${chatId}`);
-  } catch {
-    return false;
-  }
+  const page = getAssignedPage(chatId);
+  return Boolean(page && page.url().includes(`/direct/t/${chatId}`));
 }
 
 async function visible(locator: Locator): Promise<boolean> {
@@ -56,7 +53,7 @@ async function findMessageContainer(
   chatId: string,
   targetMid?: string,
 ): Promise<Locator | null> {
-  const page = getPage();
+  const page = requireChatPage(chatId);
 
   if (targetMid) {
     const escaped = targetMid.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -164,7 +161,8 @@ export async function attachDataMidsForRecentWindow(
 
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
-      const page = getPage();
+      const page = getAssignedPage(chatId);
+      if (!page) return 0;
       const groups = page
         .locator(SELECTORS.messageList)
         .locator(SELECTORS.messageGroup);
@@ -258,7 +256,11 @@ export async function stampInitialDataMids(
 ): Promise<void> {
   if (!isTargetChatOpen(chatId)) return;
 
-  const page = getPage();
+  const page = getAssignedPage(chatId);
+  if (!page) {
+    logger.warn("No tab assigned for initial data-mid stamping", { chatId });
+    return;
+  }
   const allGroups = page
     .locator(SELECTORS.messageList)
     .locator(SELECTORS.messageGroup);
@@ -337,9 +339,11 @@ export async function stampInitialDataMids(
 }
 
 export async function getRecentDomMessages(
+  chatId: string,
   limit: number,
 ): Promise<DomMessageSnapshot[]> {
-  const page = getPage();
+  const page = getAssignedPage(chatId);
+  if (!page) return [];
   const groups = page
     .locator(SELECTORS.messageList)
     .locator(SELECTORS.messageGroup);
@@ -398,7 +402,7 @@ async function resolveTargetContainer(
     return null;
   }
 
-  const page = getPage();
+  const page = requireChatPage(chatId);
   const messageList = page.locator(SELECTORS.messageList).first();
   try {
     await messageList.evaluate((el) => {
@@ -572,8 +576,11 @@ async function getReplyTargetUsername(
   }
 }
 
-async function waitForMentionDialog(page: Page): Promise<Locator | null> {
-  const deadline = Date.now() + MENTION_WAIT_MS;
+async function waitForMentionDialog(
+  page: Page,
+  timeoutMs = MENTION_WAIT_MS,
+): Promise<Locator | null> {
+  const deadline = Date.now() + timeoutMs;
   do {
     const dialogs = page.locator('div[role="dialog"]:has(> ul > li)');
     const count = await dialogs.count().catch(() => 0);
@@ -625,8 +632,9 @@ async function waitForMentionSelection(
   input: Locator,
   username: string,
   htmlBefore: string,
+  timeoutMs = MENTION_WAIT_MS,
 ): Promise<boolean> {
-  const deadline = Date.now() + MENTION_WAIT_MS;
+  const deadline = Date.now() + timeoutMs;
   do {
     const dialogGone = !(await dialog.isVisible().catch(() => false));
     const htmlAfter = await readComposerHtml(input);
@@ -641,6 +649,143 @@ async function waitForMentionSelection(
   return false;
 }
 
+/**
+ * Instagram rows are often wired to pointer/mouse handlers and the popup can
+ * close on blur before a real click lands. Dispatching the full pointer/mouse
+ * sequence in one synchronous pass avoids both problems and still triggers
+ * React's delegated handlers.
+ */
+async function dispatchSyntheticClick(target: Locator): Promise<void> {
+  await target.evaluate((el) => {
+    const init = { bubbles: true, cancelable: true, view: window, button: 0 };
+    const MouseCtor = (
+      typeof PointerEvent !== "undefined" ? PointerEvent : MouseEvent
+    ) as typeof MouseEvent;
+
+    for (const type of [
+      "pointerdown",
+      "mousedown",
+      "pointerup",
+      "mouseup",
+      "click",
+    ]) {
+      el.dispatchEvent(new MouseCtor(type, init));
+    }
+  });
+}
+
+async function dismissMentionDialog(
+  page: Page,
+  dialog: Locator | null,
+): Promise<void> {
+  if (!dialog) return;
+  if (!(await dialog.isVisible().catch(() => false))) return;
+
+  try {
+    await page.keyboard.press("Escape");
+  } catch {
+    // Best effort only.
+  }
+
+  const deadline = Date.now() + 1000;
+  do {
+    if (!(await dialog.isVisible().catch(() => false))) return;
+    await sleep(75);
+  } while (Date.now() < deadline);
+}
+
+async function attemptMentionSelection(
+  page: Page,
+  input: Locator,
+  username: string,
+  dialog: Locator,
+): Promise<boolean> {
+  const suggestion = await findExactMentionSpan(dialog, username);
+  if (!suggestion) {
+    logger.info("Mention fallback: no exact autocomplete match; continuing", {
+      username,
+    });
+    await dismissMentionDialog(page, dialog);
+    return false;
+  }
+
+  const htmlBefore = await readComposerHtml(input);
+  const row = suggestion.locator("xpath=ancestor::li[1]");
+
+  const attempts: Array<{ label: string; run: () => Promise<void> }> = [
+    {
+      label: "synthetic pointer sequence",
+      run: () => dispatchSyntheticClick(suggestion),
+    },
+    { label: "row click", run: () => row.click({ timeout: 1500 }) },
+    {
+      label: "forced row click",
+      run: () => row.click({ timeout: 1500, force: true }),
+    },
+  ];
+
+  for (const attempt of attempts) {
+    try {
+      await attempt.run();
+    } catch (err) {
+      logger.info("Mention fallback: autocomplete click attempt failed", {
+        username,
+        attempt: attempt.label,
+        error: (err as Error).message,
+      });
+      continue;
+    }
+
+    const selected = await waitForMentionSelection(
+      dialog,
+      input,
+      username,
+      htmlBefore,
+      1200,
+    );
+    if (selected) {
+      logger.info("Mention fallback: autocomplete suggestion selected", {
+        username,
+        attempt: attempt.label,
+      });
+      return true;
+    }
+  }
+
+  logger.warn(
+    "Mention fallback: mention selection not verified; continuing with literal mention",
+    { username },
+  );
+  await dismissMentionDialog(page, dialog);
+  return false;
+}
+
+/**
+ * Guarantees the composer contains the literal "@username " prefix when no
+ * autocomplete suggestion was selected. Returns false only if the composer
+ * cannot be focused or repopulated.
+ */
+async function ensureLiteralMention(
+  input: Locator,
+  username: string,
+): Promise<boolean> {
+  if (!(await focusComposer(input))) return false;
+  await input.press("End");
+
+  const current = await readComposerText(input);
+  if (!current.includes(username)) {
+    await clearComposer(input);
+    if (!(await focusComposer(input))) return false;
+    await input.pressSequentially(`@${username} `, { delay: 20 });
+    return true;
+  }
+
+  if (!/\s$/.test(current)) {
+    await input.pressSequentially(" ", { delay: 20 });
+  }
+  return true;
+}
+
 async function waitForComposerCleared(input: Locator): Promise<boolean> {
   const deadline = Date.now() + MENTION_WAIT_MS;
   do {
@@ -652,7 +797,9 @@ async function waitForComposerCleared(input: Locator): Promise<boolean> {
 }
 
 /**
- * Sends a reply as a real @mention instead of using Instagram's reply UI.
+ * Best-effort mention fallback. Selecting an autocomplete suggestion is
+ * preferred because it creates a real mention entity, but any popup failure is
+ * recoverable: we still send the literal "@username <reply text>".
  * Only used when the native reply context could not be verified as active.
  */
 async function sendTextWithMentionFallback(
@@ -660,7 +807,7 @@ async function sendTextWithMentionFallback(
   chatId: string,
   targetMid: string,
 ): Promise<boolean> {
-  const page = getPage();
+  const page = requireChatPage(chatId);
   const username = await getReplyTargetUsername(targetMid);
 
   if (!username || !MENTION_USERNAME_PATTERN.test(username)) {
@@ -689,70 +836,79 @@ async function sendTextWithMentionFallback(
   }
 
   try {
-    logger.info("Mention fallback: typing mention query", {
+    logger.info("Mention fallback: typing mention", {
       chatId,
       targetMid,
       username,
     });
 
+    // Type the mention while the query is active so Instagram can show
+    // autocomplete. If no popup appears, fall through to the literal mention.
     await input.pressSequentially(`@${username}`, { delay: 30 });
 
-    const dialog = await waitForMentionDialog(page);
+    let dialog = await waitForMentionDialog(page, 600);
     if (!dialog) {
-      logger.warn("Mention fallback: autocomplete dialog did not appear", {
-        username,
-      });
-      await clearComposer(input);
-      return false;
+      // Keep the desired literal format: "@username " followed by the reply.
+      await input.pressSequentially(" ", { delay: 20 });
+      dialog = await waitForMentionDialog(page);
     }
 
-    const suggestion = await findExactMentionSpan(dialog, username);
-    if (!suggestion) {
-      logger.warn("Mention fallback: no exact username match in autocomplete", {
+    let mentionSelected = false;
+    if (dialog) {
+      mentionSelected = await attemptMentionSelection(
+        page,
+        input,
         username,
-      });
-      await clearComposer(input);
-      return false;
+        dialog,
+      );
+    } else {
+      logger.info(
+        "Mention fallback: autocomplete unavailable; sending literal mention",
+        { username },
+      );
     }
 
-    const htmlBefore = await readComposerHtml(input);
-
-    try {
-      await suggestion.click({ timeout: 1500 });
-    } catch (err) {
-      logger.warn("Mention fallback: suggestion click failed", {
-        username,
-        error: (err as Error).message,
-      });
-      await clearComposer(input);
-      return false;
-    }
-
-    const mentionSelected = await waitForMentionSelection(
-      dialog,
-      input,
-      username,
-      htmlBefore,
-    );
     if (!mentionSelected) {
-      logger.warn("Mention fallback: mention was not selected", { username });
-      await clearComposer(input);
-      return false;
+      if (!(await ensureLiteralMention(input, username))) {
+        logger.warn(
+          "Mention fallback: could not restore literal mention in composer",
+          { username },
+        );
+        await clearComposer(input);
+        return false;
+      }
     }
 
     if (!(await focusComposer(input))) {
-      logger.warn("Mention fallback: composer lost focus after mention", {
-        username,
+      logger.warn("Mention fallback: composer could not be focused for reply", {
+        chatId,
+        targetMid,
       });
       await clearComposer(input);
       return false;
     }
 
     await input.press("End");
-    const currentText = await readComposerText(input);
+    let currentText = await readComposerText(input);
+
+    // Safety net: if the mention vanished, rebuild the literal prefix so the
+    // reply still starts with "@username".
+    if (!currentText.includes(username)) {
+      if (!(await ensureLiteralMention(input, username))) {
+        logger.warn(
+          "Mention fallback: could not restore literal mention before reply",
+          { username },
+        );
+        await clearComposer(input);
+        return false;
+      }
+      await input.press("End");
+      currentText = await readComposerText(input);
+    }
+
     const separator = currentText && !/\s$/.test(currentText) ? " " : "";
 
-    // insertText preserves the mention entity instead of replacing it.
+    // insertText preserves an existing mention entity instead of replacing it.
     await page.keyboard.insertText(`${separator}${text}`);
 
     const composed = await readComposerText(input);
@@ -780,6 +936,7 @@ async function sendTextWithMentionFallback(
       chatId,
       targetMid,
       username,
+      mentionSelected,
       length: text.length,
     });
     return true;
@@ -969,7 +1126,7 @@ export async function sendText(
       return false;
     }
 
-    const page = getPage();
+    const page = requireChatPage(chatId);
 
     // If no targetMid, just send as normal message (no reply)
     if (!targetMid) {
@@ -1046,7 +1203,7 @@ export async function sendSticker(
   targetMid?: string,
 ): Promise<boolean> {
   try {
-    const mediaDialog = await openMediaTab(getPage(), 0);
+    const mediaDialog = await openMediaTab(requireChatPage(chatId), 0);
     if (!mediaDialog) return false;
 
     const success = await searchAndSelectMedia(
@@ -1076,7 +1233,7 @@ export async function sendGIF(
   try {
     await selectToReply(chatId, targetMid);
 
-    const mediaDialog = await openMediaTab(getPage(), 1);
+    const mediaDialog = await openMediaTab(requireChatPage(chatId), 1);
     if (!mediaDialog) return false;
 
     const success = await searchAndSelectMedia(
@@ -1107,7 +1264,7 @@ export async function sendStickerOrGIF(
     const replyReady = await selectToReply(chatId, targetMid);
     if (targetMid && !replyReady) return false;
 
-    const page = getPage();
+    const page = requireChatPage(chatId);
     const mediaDialog = await openMediaTab(page, 0);
     if (!mediaDialog) return false;
 
@@ -1167,9 +1324,12 @@ export async function sendStickerOrGIF(
   }
 }
 
-export async function playMusic(query: string): Promise<boolean> {
+export async function playMusic(
+  query: string,
+  chatId: string,
+): Promise<boolean> {
   try {
-    const page = getPage();
+    const page = requireChatPage(chatId);
     const mediaDialog = await openMediaTab(page, 2);
     if (!mediaDialog) return false;
 
@@ -1208,7 +1368,7 @@ export async function sendVoiceNote(
   targetMid?: string,
 ): Promise<boolean> {
   try {
-    const page = getPage();
+    const page = requireChatPage(chatId);
     const buffer = await generateSpeechBuffer(text);
 
     await page.evaluate(async (audioData) => {
@@ -1275,7 +1435,7 @@ export async function addReaction(
 ): Promise<boolean> {
   if (!chatId || !targetMid) return false;
   try {
-    const page = getPage();
+    const page = requireChatPage(chatId);
     const msg = await resolveTargetContainer(chatId, targetMid);
     if (!msg) {
       logger.warn("Target message not found", { targetMid });

@@ -2,6 +2,12 @@ import { chromium } from "playwright-core";
 import type { Browser, BrowserContext, Page, WebSocket } from "playwright-core";
 import getConfig from "@/runtime/index.js";
 import { attachDataMidsForRecentWindow } from "@/automation/chat.js";
+import {
+  ensureChatPage,
+  initTabPool,
+  isTabPoolInitialized,
+  resetTabPool,
+} from "@/automation/tabPool.js";
 import { getStartupConversationIds } from "@/db/queries/conversations.js";
 import SELECTORS from "@/instagram/selectors.js";
 import {
@@ -199,6 +205,7 @@ export async function connectBrowser(): Promise<{
       existingContext.on("close", () => {
         if (context !== existingContext) return;
         stopPolling();
+        resetTabPool();
         page = null;
         context = null;
       });
@@ -212,6 +219,7 @@ export async function connectBrowser(): Promise<{
       connectedBrowser.on("disconnected", () => {
         if (browser !== connectedBrowser) return;
         stopPolling();
+        resetTabPool();
         page = null;
         context = null;
         browser = null;
@@ -288,20 +296,7 @@ const attachWebSocketListeners = (ws: WebSocket) => {
   });
 };
 
-const attach = (p: Page) => {
-  p.on("close", () => {
-    if (page !== p) return;
-    stopPolling();
-    page = null;
-  });
-
-  p.on("crash", () => {
-    if (page !== p) return;
-    stopPolling();
-    page = null;
-    logger.error("Instagram page crashed");
-  });
-
+const attachPageResponses = (p: Page) => {
   p.on("response", async (response) => {
     try {
       const url = response.url();
@@ -344,18 +339,25 @@ const attach = (p: Page) => {
       });
     }
   });
+};
+
+const attach = (p: Page) => {
+  p.on("close", () => {
+    if (page !== p) return;
+    stopPolling();
+    page = null;
+  });
+
+  p.on("crash", () => {
+    if (page !== p) return;
+    stopPolling();
+    page = null;
+    logger.error("Instagram page crashed");
+  });
+
+  attachPageResponses(p);
 
   p.on("websocket", attachWebSocketListeners);
-};
-
-export const getPage = () => {
-  if (!isPageUsable(page)) throw new Error("No active Instagram session");
-  return page;
-};
-
-export const ensureSession = async () => {
-  if (!isPageUsable(page)) await initInstagramSession();
-  return getPage();
 };
 
 export const handleDialogs = async (p: Page): Promise<boolean> => {
@@ -385,23 +387,6 @@ export const handleDialogs = async (p: Page): Promise<boolean> => {
   }
 
   return false;
-};
-
-const openChat = async (p: Page, id: string) => {
-  await p.goto(`https://www.instagram.com/direct/t/${id}/`, {
-    waitUntil: "domcontentloaded",
-    timeout: 60_000,
-  });
-
-  await p.waitForURL(new RegExp(`/direct/t/${id}(?:/|$)`), {
-    timeout: 30_000,
-  });
-
-  await p.waitForSelector(SELECTORS.messageInput, {
-    timeout: 30_000,
-  });
-
-  logger.info("Instagram conversation opened", { chatId: id });
 };
 
 const navigateToInbox = async (p: Page) => {
@@ -456,46 +441,74 @@ const completeLoginIfRequired = async (p: Page) => {
   }
 };
 
+let sessionInitPromise: Promise<void> | null = null;
+
 export async function initInstagramSession() {
-  if (isPageUsable(page)) return;
+  if (sessionInitPromise) return sessionInitPromise;
 
-  const { page: p } = await connectBrowser();
-  const cfg = getConfig();
+  if (isPageUsable(page)) {
+    if (!isTabPoolInitialized() && context) {
+      initTabPool(context, page, { onPageCreated: attachPageResponses });
+    }
+    return;
+  }
 
-  resetMailbox();
-  page = p;
-  attach(p);
+  const init = (async () => {
+    const { page: p } = await connectBrowser();
+    const cfg = getConfig();
 
-  await navigateToInbox(p);
-  await completeLoginIfRequired(p);
+    resetMailbox();
+    page = p;
+    attach(p);
 
-  if (!p.url().includes("/direct/")) {
     await navigateToInbox(p);
+    await completeLoginIfRequired(p);
+
+    if (!p.url().includes("/direct/")) {
+      await navigateToInbox(p);
+    }
+
+    startPolling(p);
+
+    let ids = getStartupConversationIds(cfg.instagram.chatIds);
+
+    if (!ids.length) {
+      logger.info("No configured startup conversation IDs; waiting for inbox data");
+      await waitMailbox();
+      ids = getStartupConversationIds(cfg.instagram.chatIds);
+    }
+
+    if (!ids.length) {
+      throw new Error(
+        "Instagram inbox loaded, but no startup conversations were found. Check chatIds and inbox parsing.",
+      );
+    }
+
+    if (!context) {
+      throw new Error("Instagram browser context unavailable");
+    }
+
+    initTabPool(context, p, { onPageCreated: attachPageResponses });
+
+    // Open the most recent chat in the primary tab and wait for its composer
+    // and message groups before considering it ready.
+    await ensureChatPage(ids[0]);
+  })();
+
+  sessionInitPromise = init;
+  try {
+    await init;
+  } finally {
+    if (sessionInitPromise === init) sessionInitPromise = null;
   }
-
-  startPolling(p);
-
-  let ids = getStartupConversationIds(cfg.instagram.chatIds);
-
-  if (!ids.length) {
-    logger.info("No configured startup conversation IDs; waiting for inbox data");
-    await waitMailbox();
-    ids = getStartupConversationIds(cfg.instagram.chatIds);
-  }
-
-  if (!ids.length) {
-    throw new Error(
-      "Instagram inbox loaded, but no startup conversations were found. Check chatIds and inbox parsing.",
-    );
-  }
-
-  await openChat(p, ids[0]);
 }
 
 export async function disconnectBrowser() {
   stopPolling();
   pendingOtpResolver = null;
   pendingOtpRequestedAt = null;
+  sessionInitPromise = null;
+  resetTabPool();
 
   const currentBrowser = browser;
 

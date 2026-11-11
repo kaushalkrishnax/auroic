@@ -119,7 +119,7 @@ const commandHandlers = {
     try {
       const query = context.classifiedCommand!.query.trim();
 
-      const sent = await playMusic(query);
+      const sent = await playMusic(query, context.chatId);
 
       if (!sent) {
         throw new Error(`play_music failed for query: ${query}`);

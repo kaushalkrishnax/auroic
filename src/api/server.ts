@@ -58,7 +58,7 @@ import { insertOutgoing } from "@/db/queries/outgoing.js";
 import { COMMAND_REGISTRY } from "@/command/commandRegistry.js";
 import { executeAction } from "@/router/dispatcher.js";
 import { sendText } from "@/automation/chat.js";
-import { navigateToChat } from "@/automation/navigation.js";
+import { runWithChatPage } from "@/automation/tabPool.js";
 import { emitEvent } from "@/events.js";
 import {
   getOtpPendingRequestedAt,
@@ -515,8 +515,7 @@ app.post("/api/commands/execute", async (c) => {
         chatId,
         async () => {
           await initInstagramSession();
-          await navigateToChat(chatId);
-          return sendText(rawInput, chatId);
+          return runWithChatPage(chatId, () => sendText(rawInput, chatId));
         },
       );
 

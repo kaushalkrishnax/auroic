@@ -15,7 +15,7 @@ import { insertOutgoing } from "@/db/queries/outgoing.js";
 import { getConversationById } from "@/db/queries/conversations.js";
 import { attachDataMidToDOM, stampInitialDataMids } from "@/automation/chat.js";
 import { initInstagramSession } from "@/automation/session.js";
-import { navigateToChat } from "@/automation/navigation.js";
+import { runWithChatPage } from "@/automation/tabPool.js";
 import { invokeRouter } from "@/router/router.js";
 import {
   classifyCommand,
@@ -372,8 +372,9 @@ async function processPassiveBatch(chatId: string): Promise<void> {
 
     await runWithAutomationLock("passive-prepare", chatId, async () => {
       await initInstagramSession();
-      await navigateToChat(chatId);
-      await stampInitialDataMids(chatId, totalWindow);
+      await runWithChatPage(chatId, () =>
+        stampInitialDataMids(chatId, totalWindow),
+      );
     });
 
     // Build router window from DB so candidates are anchored to newly tracked

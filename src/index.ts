@@ -8,6 +8,7 @@ import {
   disconnectBrowser,
 } from "@/automation/session.js";
 import { attachDataMidToDOM } from "@/automation/chat.js";
+import { noteChatActivity } from "@/automation/tabPool.js";
 import { eventBus } from "@/events.js";
 import { isSystemPaused } from "@/runtime/systemControl.js";
 import type { AppEvent } from "@/events.js";
@@ -56,6 +57,10 @@ function registerShutdown(): void {
 function onAppEvent(event: AppEvent): void {
   if (shuttingDown) return;
   if (event.type !== "NEW_MESSAGE" && event.type !== "EDIT") return;
+
+  if (event.type === "NEW_MESSAGE") {
+    noteChatActivity(event.chatId, event.timestampMs);
+  }
 
   if (isSystemPaused()) {
     logger.info("Skipping event while system is paused", {
@@ -117,6 +122,10 @@ async function boot(): Promise<void> {
   const config = getConfig();
   initDB(config.db.path);
 
+  // Subscribe before session startup so incoming WebSocket events are ingested
+  // while the primary tab is still initializing.
+  eventBus.on("event", onAppEvent);
+
   try {
     await initInstagramSession();
   } catch (err) {
@@ -126,7 +135,6 @@ async function boot(): Promise<void> {
     process.exit(1);
   }
 
-  eventBus.on("event", onAppEvent);
   logger.info("Boot complete — listening for WebSocket events");
 }
 

@@ -10,8 +10,8 @@ import { executeReact } from "@/router/actions/react.js";
 import { executeText } from "@/router/actions/text.js";
 import { executeMedia } from "@/router/actions/media.js";
 import { executeCommand } from "@/command/command.js";
-import { navigateToChat } from "@/automation/navigation.js";
 import { initInstagramSession } from "@/automation/session.js";
+import { ensureChatPage, runWithChatPage } from "@/automation/tabPool.js";
 import { runWithAutomationLock } from "@/automation/executionLock.js";
 
 type ActionHandler = (context: ActionContext) => Promise<string | null>;
@@ -24,7 +24,7 @@ const ACTION_HANDLERS: Partial<Record<ActionType, ActionHandler>> = {
 
 async function prepareActionExecution(chatId: string): Promise<void> {
   await initInstagramSession();
-  await navigateToChat(chatId);
+  await ensureChatPage(chatId);
 }
 
 export async function executeAction(
@@ -49,7 +49,7 @@ export async function executeAction(
       });
 
       try {
-        await executeCommand(context);
+        await runWithChatPage(context.chatId, () => executeCommand(context));
         logger.info("Command execution complete", {
           commandName: classifiedCommand.commandName,
         });
@@ -69,6 +69,6 @@ export async function executeAction(
       return null;
     }
 
-    return handler(context);
+    return runWithChatPage(context.chatId, () => handler(context));
   });
 }
