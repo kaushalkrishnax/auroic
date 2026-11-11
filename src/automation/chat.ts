@@ -2,6 +2,7 @@ import type { Locator, Page } from "playwright-core";
 import { find } from "node-emoji";
 import { getPage } from "@/automation/session.js";
 import { getLatestMessages, getMessageByMid } from "@/db/queries/messages.js";
+import { getUserByFbid } from "@/db/queries/users.js";
 import SELECTORS from "@/instagram/selectors.js";
 import logger from "@/utils/logger.js";
 import { sleep } from "@/utils/delay.js";
@@ -449,6 +450,350 @@ export async function selectToReply(
   }
 }
 
+const MENTION_WAIT_MS = 2_000;
+const MENTION_USERNAME_PATTERN = /^[A-Za-z0-9._]{1,30}$/;
+
+async function readComposerText(input: Locator): Promise<string> {
+  return input
+    .evaluate((el) => {
+      const node = el as HTMLElement;
+      return node.innerText ?? node.textContent ?? "";
+    })
+    .catch(() => "");
+}
+
+async function readComposerHtml(input: Locator): Promise<string> {
+  return input.evaluate((el) => el.innerHTML).catch(() => "");
+}
+
+async function focusComposer(input: Locator): Promise<boolean> {
+  try {
+    if (!(await visible(input))) return false;
+    await input.click({ timeout: 2000 });
+    return await input
+      .evaluate(
+        (el) =>
+          el === document.activeElement || el.contains(document.activeElement),
+      )
+      .catch(() => false);
+  } catch {
+    return false;
+  }
+}
+
+async function clearComposer(input: Locator): Promise<void> {
+  try {
+    await input.fill("");
+  } catch {
+    // Best effort — never throw from a cleanup path.
+  }
+}
+
+/**
+ * Checks whether the native reply context is actually active. We look for the
+ * reply preview (cancel-reply control or the target message snippet rendered
+ * inside the composer). Returning false here only ever sends the mention
+ * fallback, which still delivers the reply, so we deliberately fail closed.
+ */
+async function isNativeReplyActive(
+  page: Page,
+  targetMid: string,
+  composerHtmlBefore: string,
+): Promise<boolean> {
+  const targetText = getMessageByMid(targetMid)?.textContent?.trim() ?? "";
+  const snippet =
+    targetText.length > 24 ? targetText.slice(0, 24) : targetText;
+  const composer = page.locator(SELECTORS.messageComposer).first();
+  const replyControl = page
+    .locator('[aria-label*="Cancel reply" i], [aria-label*="Replying" i]')
+    .first();
+  const replyText = composer.getByText(/Replying to/i).first();
+  const cancelControl = composer
+    .locator('[aria-label*="Cancel" i], [aria-label*="Remove" i]')
+    .first();
+
+  const deadline = Date.now() + 1500;
+  do {
+    if (await replyControl.isVisible().catch(() => false)) return true;
+    if (await replyText.isVisible().catch(() => false)) return true;
+    if (await cancelControl.isVisible().catch(() => false)) return true;
+
+    if (snippet && (await visible(composer))) {
+      const previewMatches = await composer
+        .evaluate((el, text) => (el.textContent ?? "").includes(text), snippet)
+        .catch(() => false);
+      if (previewMatches) return true;
+    }
+
+    // A successful reply inserts a preview bar above the textbox, changing the
+    // composer subtree. An unchanged subtree means the click had no effect.
+    const composerHtmlAfter = await readComposerHtml(composer);
+    if (
+      composerHtmlBefore &&
+      composerHtmlAfter &&
+      composerHtmlAfter !== composerHtmlBefore
+    ) {
+      return true;
+    }
+
+    await sleep(150);
+  } while (Date.now() < deadline);
+
+  return false;
+}
+
+/**
+ * Gets the username of the message sender for a given message ID.
+ */
+async function getReplyTargetUsername(
+  targetMid: string,
+): Promise<string | null> {
+  try {
+    const message = getMessageByMid(targetMid);
+    if (!message) {
+      logger.warn("Target message not found in DB", { targetMid });
+      return null;
+    }
+    const user = getUserByFbid(message.userId);
+    if (!user?.username) {
+      logger.warn("Target user or username not found", {
+        userId: message.userId,
+        targetMid,
+      });
+      return null;
+    }
+    return user.username.trim();
+  } catch (err) {
+    logger.warn("Failed to get reply target username", {
+      targetMid,
+      error: (err as Error).message,
+    });
+    return null;
+  }
+}
+
+async function waitForMentionDialog(page: Page): Promise<Locator | null> {
+  const deadline = Date.now() + MENTION_WAIT_MS;
+  do {
+    const dialogs = page.locator('div[role="dialog"]:has(> ul > li)');
+    const count = await dialogs.count().catch(() => 0);
+
+    for (let i = count - 1; i >= 0; i--) {
+      const dialog = dialogs.nth(i);
+      if (await dialog.isVisible().catch(() => false)) return dialog;
+    }
+
+    await sleep(100);
+  } while (Date.now() < deadline);
+
+  return null;
+}
+
+/**
+ * Returns the topmost li's span whose text is exactly "@username" (or the bare
+ * username). Never matches substrings, so "Mention everyone" cannot be picked.
+ */
+async function findExactMentionSpan(
+  dialog: Locator,
+  username: string,
+): Promise<Locator | null> {
+  const listItems = dialog.locator(":scope > ul > li");
+  const itemCount = await listItems.count().catch(() => 0);
+  const expected = `@${username}`;
+
+  for (let i = 0; i < itemCount; i++) {
+    const spans = listItems.nth(i).locator("span");
+    const spanCount = await spans.count().catch(() => 0);
+
+    for (let j = 0; j < spanCount; j++) {
+      const span = spans.nth(j);
+      const text = (
+        (await span.textContent({ timeout: 500 }).catch(() => "")) ?? ""
+      )
+        .replace(/\s+/g, " ")
+        .trim();
+
+      if (text === expected || text === username) return span;
+    }
+  }
+
+  return null;
+}
+
+async function waitForMentionSelection(
+  dialog: Locator,
+  input: Locator,
+  username: string,
+  htmlBefore: string,
+): Promise<boolean> {
+  const deadline = Date.now() + MENTION_WAIT_MS;
+  do {
+    const dialogGone = !(await dialog.isVisible().catch(() => false));
+    const htmlAfter = await readComposerHtml(input);
+    const composerText = await readComposerText(input);
+    const hasUsername = composerText.includes(username);
+
+    if (dialogGone && hasUsername && htmlAfter !== htmlBefore) return true;
+
+    await sleep(100);
+  } while (Date.now() < deadline);
+
+  return false;
+}
+
+async function waitForComposerCleared(input: Locator): Promise<boolean> {
+  const deadline = Date.now() + MENTION_WAIT_MS;
+  do {
+    if (!(await readComposerText(input)).trim()) return true;
+    await sleep(100);
+  } while (Date.now() < deadline);
+
+  return false;
+}
+
+/**
+ * Sends a reply as a real @mention instead of using Instagram's reply UI.
+ * Only used when the native reply context could not be verified as active.
+ */
+async function sendTextWithMentionFallback(
+  text: string,
+  chatId: string,
+  targetMid: string,
+): Promise<boolean> {
+  const page = getPage();
+  const username = await getReplyTargetUsername(targetMid);
+
+  if (!username || !MENTION_USERNAME_PATTERN.test(username)) {
+    logger.warn("Mention fallback: missing or invalid username", {
+      chatId,
+      targetMid,
+      username,
+    });
+    return false;
+  }
+
+  const input = page.locator(SELECTORS.messageInput).first();
+  if (!(await focusComposer(input))) {
+    logger.warn("Mention fallback: composer could not be focused", {
+      chatId,
+      targetMid,
+    });
+    return false;
+  }
+
+  // Start from a clean composer so the typed mention is unambiguous.
+  await clearComposer(input);
+  if (!(await focusComposer(input))) {
+    logger.warn("Mention fallback: composer lost focus", { chatId, targetMid });
+    return false;
+  }
+
+  try {
+    logger.info("Mention fallback: typing mention query", {
+      chatId,
+      targetMid,
+      username,
+    });
+
+    await input.pressSequentially(`@${username}`, { delay: 30 });
+
+    const dialog = await waitForMentionDialog(page);
+    if (!dialog) {
+      logger.warn("Mention fallback: autocomplete dialog did not appear", {
+        username,
+      });
+      await clearComposer(input);
+      return false;
+    }
+
+    const suggestion = await findExactMentionSpan(dialog, username);
+    if (!suggestion) {
+      logger.warn("Mention fallback: no exact username match in autocomplete", {
+        username,
+      });
+      await clearComposer(input);
+      return false;
+    }
+
+    const htmlBefore = await readComposerHtml(input);
+
+    try {
+      await suggestion.click({ timeout: 1500 });
+    } catch (err) {
+      logger.warn("Mention fallback: suggestion click failed", {
+        username,
+        error: (err as Error).message,
+      });
+      await clearComposer(input);
+      return false;
+    }
+
+    const mentionSelected = await waitForMentionSelection(
+      dialog,
+      input,
+      username,
+      htmlBefore,
+    );
+    if (!mentionSelected) {
+      logger.warn("Mention fallback: mention was not selected", { username });
+      await clearComposer(input);
+      return false;
+    }
+
+    if (!(await focusComposer(input))) {
+      logger.warn("Mention fallback: composer lost focus after mention", {
+        username,
+      });
+      await clearComposer(input);
+      return false;
+    }
+
+    await input.press("End");
+    const currentText = await readComposerText(input);
+    const separator = currentText && !/\s$/.test(currentText) ? " " : "";
+
+    // insertText preserves the mention entity instead of replacing it.
+    await page.keyboard.insertText(`${separator}${text}`);
+
+    const composed = await readComposerText(input);
+    if (!composed.includes(text)) {
+      logger.warn("Mention fallback: reply text was not inserted", {
+        username,
+      });
+      await clearComposer(input);
+      return false;
+    }
+
+    await input.press("Enter");
+
+    if (!(await waitForComposerCleared(input))) {
+      logger.warn("Mention fallback: send could not be verified", {
+        chatId,
+        targetMid,
+        username,
+      });
+      await clearComposer(input);
+      return false;
+    }
+
+    logger.info("Mention fallback: reply sent", {
+      chatId,
+      targetMid,
+      username,
+      length: text.length,
+    });
+    return true;
+  } catch (err) {
+    logger.warn("Mention fallback failed", {
+      chatId,
+      targetMid,
+      error: (err as Error).message,
+    });
+    await clearComposer(input);
+    return false;
+  }
+}
+
 function sanitizeMediaTitle(title: string): string {
   return title
     .replace(/\b(media|meme|gif|sticker)\b/gi, "")
@@ -624,23 +969,71 @@ export async function sendText(
       return false;
     }
 
-    await selectToReply(chatId, targetMid);
+    const page = getPage();
 
-    const input = getPage().locator(SELECTORS.messageInput).first();
-    if (!(await visible(input))) {
-      logger.warn("Message input not found");
-      return false;
+    // If no targetMid, just send as normal message (no reply)
+    if (!targetMid) {
+      const input = page.locator(SELECTORS.messageInput).first();
+      if (!(await visible(input))) {
+        logger.warn("Message input not found");
+        return false;
+      }
+
+      await input.click();
+      await input.fill(trimmedText);
+      await input.press("Enter");
+
+      logger.info("Text message sent", {
+        length: trimmedText.length,
+        reply: false,
+      });
+      return true;
     }
 
-    await input.click();
-    await input.fill(trimmedText);
-    await input.press("Enter");
+    // Try native reply first
+    const composerHtmlBefore = await readComposerHtml(
+      page.locator(SELECTORS.messageComposer).first(),
+    );
+    const nativeReplyActivated = await selectToReply(chatId, targetMid);
 
-    logger.info("Text message sent", {
-      length: trimmedText.length,
-      reply: !!targetMid,
-    });
-    return true;
+    // Verify native reply context is actually active
+    const isReplyActive =
+      nativeReplyActivated &&
+      (await isNativeReplyActive(page, targetMid, composerHtmlBefore));
+
+    if (isReplyActive) {
+      // Native reply worked - use existing flow
+      const input = page.locator(SELECTORS.messageInput).first();
+      if (!(await visible(input))) {
+        logger.warn("Message input not found after native reply");
+        return false;
+      }
+
+      await input.click();
+      await input.fill(trimmedText);
+      await input.press("Enter");
+
+      logger.info("Text message sent via native reply", {
+        length: trimmedText.length,
+        reply: true,
+      });
+      return true;
+    }
+
+    // Native reply failed - use mention fallback
+    logger.info("Native reply activation failed, attempting mention fallback", { chatId, targetMid });
+    const fallbackSuccess = await sendTextWithMentionFallback(trimmedText, chatId, targetMid);
+
+    if (fallbackSuccess) {
+      logger.info("Text message sent via mention fallback", {
+        length: trimmedText.length,
+        reply: true,
+      });
+      return true;
+    }
+
+    logger.warn("Both native reply and mention fallback failed", { chatId, targetMid });
+    return false;
   } catch (err) {
     logger.warn("Send text failed", { error: (err as Error).message });
     return false;

@@ -1,6 +1,8 @@
 /**
  * Action: text
  * Generates a reply using the LLM generation module and sends it.
+ *
+ * Enforces a strict validation boundary between reply generation and Instagram delivery.
  */
 
 import logger from "@/utils/logger.js";
@@ -35,38 +37,60 @@ export async function executeText(
 
   const cleanHistory = history.map((h) => h.replace(/@BOT/gi, "").trim());
 
+  let replyText: string;
   try {
-    const replyText = await generateReply(
+    replyText = await generateReply(
       cleanHistory,
       cleanGeneratorCandidates,
       decision.effort,
     );
-
-    logger.info("Sending text reply", {
-      chatId,
-      preview: replyText.slice(0, 80),
-    });
-
-    const sent = await sendText(
-      replyText,
-      chatId,
-      context.targetMessageId ?? undefined,
-    );
-
-    if (!sent) {
-      logger.warn("Text action skipped: target unavailable or send failed", {
-        chatId,
-        targetMessageId: context.targetMessageId,
-      });
-      return null;
-    }
-
-    return replyText;
   } catch (err) {
-    logger.error("Failed to execute text action", {
+    logger.error("Text action failed: LLM reply generation failed", {
       chatId,
+      target: decision.target,
+      effort: decision.effort,
       error: (err as Error).message,
+      outcome: "generation_failed",
     });
     return null;
   }
+
+  // Strict validation boundary: ensure generated response is a non-empty string before delivery
+  const trimmedReply = typeof replyText === "string" ? replyText.trim() : "";
+  if (!trimmedReply) {
+    logger.error("Text action rejected: generated reply is empty or invalid", {
+      chatId,
+      target: decision.target,
+      effort: decision.effort,
+      outcome: "empty_generation_rejected",
+    });
+    return null;
+  }
+
+  logger.info("Sending text reply", {
+    chatId,
+    preview: trimmedReply.slice(0, 80),
+  });
+
+  const sent = await sendText(
+    trimmedReply,
+    chatId,
+    context.targetMessageId ?? undefined,
+  );
+
+  if (!sent) {
+    logger.warn("Text action delivery failed: sendText returned false", {
+      chatId,
+      targetMessageId: context.targetMessageId,
+      outcome: "delivery_failed",
+    });
+    return null;
+  }
+
+  logger.info("Text action completed successfully", {
+    chatId,
+    targetMessageId: context.targetMessageId,
+    outcome: "success",
+  });
+  return trimmedReply;
 }

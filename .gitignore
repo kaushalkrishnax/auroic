@@ -12,3 +12,4 @@ dist/
 *.db
 *.db-wal
 __pycache__/
+.DS_Store

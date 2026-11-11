@@ -103,7 +103,7 @@ export function getConfig() {
         high: "openai/gpt-oss-120b",
       },
       output: llm.output ?? {
-        maxTokens: 100,
+        maxTokens: 150,
         timeout: 30000,
       },
     },
