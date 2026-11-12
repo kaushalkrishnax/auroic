@@ -949,13 +949,22 @@ async function waitForNewMessage(
   timeoutMs = 8000,
 ): Promise<boolean> {
   try {
-    await page.waitForFunction(
-      (payload: { sel: string; before: number }) =>
-        document.querySelectorAll(payload.sel).length > payload.before,
-      { sel: SELECTORS.messageContainer, before: beforeCount },
-      { timeout: timeoutMs },
-    );
-    return true;
+    return await page
+      .waitForFunction(
+        (payload: { listSel: string; itemSel: string; before: number }) => {
+          const list = document.querySelector(payload.listSel);
+          if (!list) return false;
+          return list.querySelectorAll(payload.itemSel).length > payload.before;
+        },
+        {
+          listSel: SELECTORS.messageList,
+          itemSel: SELECTORS.messageContainer,
+          before: beforeCount,
+        },
+        { timeout: timeoutMs },
+      )
+      .then(() => true)
+      .catch(() => false);
   } catch {
     return false;
   }
@@ -1688,6 +1697,13 @@ export async function sendVoiceNote(
   try {
     const page = requireChatPage(chatId);
 
+    // Ensure the tab is focused so AudioContext and media capture are active
+    try {
+      await page.bringToFront();
+    } catch {
+      // Best effort
+    }
+
     // Grant microphone permission on the browser context
     try {
       await page.context().grantPermissions(["microphone"], {
@@ -1714,11 +1730,20 @@ export async function sendVoiceNote(
     }
     const conversation = page.locator(SELECTORS.conversation).first();
     const composer = conversation.locator(SELECTORS.messageComposer).first();
+
+    // Ensure composer text input is clear so the Voice Clip button is visible
+    const input = composer.locator(SELECTORS.messageInput).first();
+    const currentText = await readComposerText(input);
+    if (currentText.trim().length > 0) {
+      await clearComposer(input);
+      await page.waitForTimeout(150);
+    }
+
     const buffer = await generateSpeechBuffer(text);
 
     await page.evaluate(async (audioData) => {
       const win = window as any;
-      if (win.audioContext) {
+      if (win.audioContext && win.audioContext.state !== "closed") {
         try {
           await win.audioContext.close();
         } catch {}
@@ -1729,7 +1754,9 @@ export async function sendVoiceNote(
       win.mixedDestination = win.audioContext.createMediaStreamDestination();
       navigator.mediaDevices.getUserMedia = async (constraints) =>
         constraints?.audio ? win.mixedDestination.stream : null;
-      await win.audioContext.resume();
+      if (win.audioContext.state === "suspended") {
+        await win.audioContext.resume();
+      }
       win.currentAudioBuffer = await win.audioContext.decodeAudioData(
         Uint8Array.from(audioData).buffer,
       );
@@ -1738,14 +1765,32 @@ export async function sendVoiceNote(
     await page.waitForTimeout(300);
 
     const voiceBtn = composer.locator(SELECTORS.voiceNoteButton).first();
-    if (!(await click(voiceBtn, 3000))) {
-      logger.warn("Voice note button not found or not clickable", { chatId });
+    if (!(await visible(voiceBtn, 3000))) {
+      logger.warn("Voice note button not visible in composer", { chatId });
       return false;
     }
-    await page.waitForTimeout(500);
+    try {
+      await voiceBtn.click({ timeout: 3000, noWaitAfter: true });
+    } catch {
+      await voiceBtn.dispatchEvent("click").catch(() => null);
+    }
+
+    const stopRecordingBtn = composer
+      .locator('div[role="button"][aria-label="Stop recording"]')
+      .first();
+    const recordingStarted = await visible(stopRecordingBtn, 4000);
+    if (!recordingStarted) {
+      logger.warn("Recording did not start after clicking voice button", {
+        chatId,
+      });
+      return false;
+    }
 
     const durationSec = await page.evaluate(async () => {
       const win = window as any;
+      if (win.audioContext.state === "suspended") {
+        await win.audioContext.resume();
+      }
       const source = win.audioContext.createBufferSource();
       const gain = win.audioContext.createGain();
       gain.gain.value = 1;
@@ -1766,9 +1811,50 @@ export async function sendVoiceNote(
       .count();
 
     const sendBtn = composer.locator(SELECTORS.sendVoiceNoteButton).first();
-    if (!(await click(sendBtn, 3000))) {
-      logger.warn("Send voice note button not found or not clickable", { chatId });
-      const closeBtn = composer.locator('div[role="button"][aria-label="Close Button"]').first();
+    if (!(await visible(sendBtn, 3000))) {
+      logger.warn("Send voice note button not visible during recording", {
+        chatId,
+      });
+      const closeBtn = composer
+        .locator('div[role="button"][aria-label="Close Button"]')
+        .first();
+      if (await visible(closeBtn, 1000)) await click(closeBtn);
+      return false;
+    }
+
+    try {
+      await sendBtn.click({ timeout: 3000, noWaitAfter: true });
+    } catch {
+      await sendBtn.dispatchEvent("click").catch(() => null);
+    }
+
+    // Wait for the recording UI to close
+    const recordingClosed = await stopRecordingBtn
+      .waitFor({ state: "hidden", timeout: 4000 })
+      .then(() => true)
+      .catch(() => false);
+
+    if (!recordingClosed) {
+      logger.warn(
+        "Recording toolbar did not close after click; dispatching click",
+        { chatId },
+      );
+      await sendBtn.dispatchEvent("click").catch(() => null);
+      await stopRecordingBtn
+        .waitFor({ state: "hidden", timeout: 3000 })
+        .catch(() => null);
+    }
+
+    const stillRecording = await stopRecordingBtn
+      .isVisible()
+      .catch(() => false);
+    if (stillRecording) {
+      logger.warn("Voice note send was rejected by Instagram; canceling", {
+        chatId,
+      });
+      const closeBtn = composer
+        .locator('div[role="button"][aria-label="Close Button"]')
+        .first();
       if (await visible(closeBtn, 1000)) await click(closeBtn);
       return false;
     }
@@ -1779,7 +1865,9 @@ export async function sendVoiceNote(
 
     const verified = await waitForNewMessage(page, beforeCount, 10000);
     if (!verified) {
-      logger.warn("Voice note sent but did not appear in conversation", { chatId });
+      logger.warn("Voice note sent but did not appear in conversation", {
+        chatId,
+      });
       return false;
     }
 
