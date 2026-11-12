@@ -179,6 +179,23 @@ export async function connectBrowser(): Promise<{
     let connectedBrowser: Browser | null = null;
 
     try {
+      // Ensure at least one target page exists in Chromium before connecting over CDP.
+      // If zero pages exist, CDP context initialization throws "Browser context management is not supported".
+      try {
+        const targetsRes = await fetch(`${CHROMIUM_CDP_URL}/json`);
+        if (targetsRes.ok) {
+          const targets = (await targetsRes.json()) as Array<{ type?: string }>;
+          const pageTargets = targets.filter((t) => t.type === "page");
+          if (pageTargets.length === 0) {
+            await fetch(`${CHROMIUM_CDP_URL}/json/new?https://www.instagram.com`, {
+              method: "PUT",
+            });
+          }
+        }
+      } catch {
+        // Best effort pre-check
+      }
+
       connectedBrowser = await chromium.connectOverCDP(CHROMIUM_CDP_URL, {
         timeout: 30_000,
       });
@@ -201,6 +218,16 @@ export async function connectBrowser(): Promise<{
       browser = connectedBrowser;
       context = existingContext;
       page = existingPage;
+
+      try {
+        await existingContext.grantPermissions(["microphone"], {
+          origin: "https://www.instagram.com",
+        });
+      } catch (permErr) {
+        logger.debug("Failed to grant microphone permission on context init", {
+          error: (permErr as Error).message,
+        });
+      }
 
       existingContext.on("close", () => {
         if (context !== existingContext) return;

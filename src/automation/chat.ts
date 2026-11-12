@@ -1687,6 +1687,18 @@ export async function sendVoiceNote(
 ): Promise<boolean> {
   try {
     const page = requireChatPage(chatId);
+
+    // Grant microphone permission on the browser context
+    try {
+      await page.context().grantPermissions(["microphone"], {
+        origin: "https://www.instagram.com",
+      });
+    } catch (permErr) {
+      logger.debug("Failed to grant microphone permission", {
+        error: (permErr as Error).message,
+      });
+    }
+
     let replyReady = false;
     if (targetMid) {
       replyReady = await selectToReply(chatId, targetMid);
@@ -1725,8 +1737,11 @@ export async function sendVoiceNote(
 
     await page.waitForTimeout(300);
 
-    if (!(await click(composer.locator(SELECTORS.voiceNoteButton).first())))
+    const voiceBtn = composer.locator(SELECTORS.voiceNoteButton).first();
+    if (!(await click(voiceBtn, 3000))) {
+      logger.warn("Voice note button not found or not clickable", { chatId });
       return false;
+    }
     await page.waitForTimeout(500);
 
     const durationSec = await page.evaluate(async () => {
@@ -1741,26 +1756,38 @@ export async function sendVoiceNote(
       return source.buffer.duration;
     });
 
-    await page.waitForTimeout(durationSec * 1000 + 200);
+    // Instagram voice messages require a minimum duration (at least 1.2s)
+    const playWaitMs = Math.max(durationSec, 1.2) * 1000 + 400;
+    await page.waitForTimeout(playWaitMs);
 
     const messageList = conversation.locator(SELECTORS.messageList).first();
     const beforeCount = await messageList
       .locator(SELECTORS.messageContainer)
       .count();
 
-    if (!(await click(composer.locator(SELECTORS.sendVoiceNoteButton).first())))
+    const sendBtn = composer.locator(SELECTORS.sendVoiceNoteButton).first();
+    if (!(await click(sendBtn, 3000))) {
+      logger.warn("Send voice note button not found or not clickable", { chatId });
+      const closeBtn = composer.locator('div[role="button"][aria-label="Close Button"]').first();
+      if (await visible(closeBtn, 1000)) await click(closeBtn);
       return false;
+    }
 
     await page.evaluate(() => {
       (window as any).currentAudioBuffer = null;
     });
 
-    const verified = await waitForNewMessage(page, beforeCount);
+    const verified = await waitForNewMessage(page, beforeCount, 10000);
     if (!verified) {
-      logger.warn("Voice note sent but did not appear in conversation");
+      logger.warn("Voice note sent but did not appear in conversation", { chatId });
+      return false;
     }
 
-    logger.info("Voice note sent successfully");
+    logger.info("Voice note sent successfully", {
+      chatId,
+      reply: replyReady,
+      durationSec,
+    });
     return true;
   } catch (err: any) {
     logger.warn("Send voice note failed", { error: err.message });

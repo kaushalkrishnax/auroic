@@ -10,7 +10,7 @@ export interface ParsedResponse {
   errors: string[];
 }
 
-const TOKEN_PATTERN = /\[(sticker|gif|voice|music)\s*=\s*([\s\S]*?)\]/gi;
+const TOKEN_PATTERN = /\[(sticker|gif|voice|music)\s*[:=]\s*([\s\S]*?)\]/gi;
 
 function pushText(segments: ResponseSegment[], value: string): void {
   if (!value) return;

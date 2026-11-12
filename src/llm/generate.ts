@@ -88,14 +88,14 @@ export async function generateReply(
       isRetry
         ? retryGuidance
         : format === "multimodal"
-          ? "Reply naturally. You may interleave plain text with [sticker=Intent], [gif=Intent], [voice=TEXT], and [music=SONG_TITLE]. Use concise sticker and GIF search descriptions. Keep each segment self-contained. Do not wrap the response in a code block."
+          ? "Reply naturally. You may interleave plain text with [sticker: Intent], [gif: Intent], [voice: TEXT], and [music: SONG_TITLE]. Use concise sticker and GIF search descriptions. Keep each segment self-contained. Do not wrap the response in a code block."
           : "Reply naturally. Do not start your reply with any tag, label, or prefix.",
     ]
       .filter(Boolean)
       .join("\n\n");
 
     const protocolInstructions = format === "multimodal"
-      ? "APPLICATION OUTPUT PROTOCOL (takes priority over conflicting formatting preferences): Return a single user-facing response. You may interleave plain text with [sticker=Intent] where Intent is a short description for Instagram sticker search; [gif=Intent] where Intent is a short visual search description; [voice=TEXT] where TEXT is the exact spoken text; and [music=SONG_TITLE] where SONG_TITLE is a song or artist search. Do not assume a saved sticker catalog exists. Do not explain the tokens or output JSON, code fences, or unrecognized tags. Preserve the persona, tone, language, and conversational behavior requested in the custom prompt."
+      ? "APPLICATION OUTPUT PROTOCOL (takes priority over conflicting formatting preferences): Return a single user-facing response. You may interleave plain text with [sticker: Intent] where Intent is a short description for Instagram sticker search; [gif: Intent] where Intent is a short visual search description; [voice: TEXT] where TEXT is the exact spoken text; and [music: SONG_TITLE] where SONG_TITLE is a song or artist search. Do not assume a saved sticker catalog exists. Do not explain the tokens or output JSON, code fences, or unrecognized tags. Preserve the persona, tone, language, and conversational behavior requested in the custom prompt."
       : "";
 
     const messages: ChatMessage[] = [
