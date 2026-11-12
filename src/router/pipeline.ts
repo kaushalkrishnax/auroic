@@ -673,6 +673,8 @@ async function processCandidates(chatId: string): Promise<void> {
   const config = getConfig();
   const state = getConversationState(chatId);
 
+  // Never preempt an active response. New messages queue until it finishes,
+  // so standalone media such as music can still be sent directly to the chat.
   if (state.processing || state.candidates.length === 0) return;
 
   state.processing = true;

@@ -1,96 +1,120 @@
 /**
- * Action: text
- * Generates a reply using the LLM generation module and sends it.
- *
- * Enforces a strict validation boundary between reply generation and Instagram delivery.
+ * Generates a multimodal response and delivers its segments in order.
+ * Every segment is verified by its automation handler before the next begins.
  */
 
 import logger from "@/utils/logger.js";
-import { sendText } from "@/automation/chat.js";
+import {
+  sendText,
+  sendSticker,
+  sendGIF,
+  sendVoiceNote,
+  playMusic,
+} from "@/automation/chat.js";
 import { generateReply } from "@/llm/generate.js";
+import { hasDeliverableSegments, parseResponse } from "@/response/protocol.js";
 import type { ActionContext } from "@/types/index.js";
 
-export async function executeText(
-  context: ActionContext,
-): Promise<string | null> {
+export async function executeText(context: ActionContext): Promise<string | null> {
   const { chatId, decision, history, candidates, targetTextContent } = context;
-
-  logger.info("Action: text", {
-    chatId,
-    target: decision.target,
-    effort: decision.effort,
-  });
 
   if (!decision.effort) {
     logger.warn("Text action missing effort level", decision);
     return null;
   }
 
-  // Only expose the target candidate to the generator — other candidates are irrelevant noise.
-  const generatorCandidates = targetTextContent
-    ? [targetTextContent]
-    : candidates;
+  const generatorCandidates = targetTextContent ? [targetTextContent] : candidates;
+  const cleanCandidates = generatorCandidates.map((value) => value.replace(/@BOT/gi, "").trim());
+  const cleanHistory = history.map((value) => value.replace(/@BOT/gi, "").trim());
 
-  const cleanGeneratorCandidates = generatorCandidates.map((c) =>
-    c.replace(/@BOT/gi, "").trim(),
-  );
-
-  const cleanHistory = history.map((h) => h.replace(/@BOT/gi, "").trim());
-
-  let replyText: string;
+  let generated: string;
   try {
-    replyText = await generateReply(
-      cleanHistory,
-      cleanGeneratorCandidates,
-      decision.effort,
-    );
+    generated = await generateReply(cleanHistory, cleanCandidates, decision.effort, "multimodal");
   } catch (err) {
-    logger.error("Text action failed: LLM reply generation failed", {
+    logger.error("Multimodal response generation failed", {
       chatId,
-      target: decision.target,
-      effort: decision.effort,
       error: (err as Error).message,
-      outcome: "generation_failed",
     });
     return null;
   }
 
-  // Strict validation boundary: ensure generated response is a non-empty string before delivery
-  const trimmedReply = typeof replyText === "string" ? replyText.trim() : "";
-  if (!trimmedReply) {
-    logger.error("Text action rejected: generated reply is empty or invalid", {
+  const parsed = parseResponse(generated);
+  if (!hasDeliverableSegments(parsed)) {
+    logger.error("Rejected malformed or empty multimodal response", {
       chatId,
-      target: decision.target,
-      effort: decision.effort,
-      outcome: "empty_generation_rejected",
+      errors: parsed.errors,
+      outputLength: generated?.length ?? 0,
     });
     return null;
   }
 
-  logger.info("Sending text reply", {
+  const delivered: string[] = [];
+  const failed: string[] = [];
+  const targetMid = context.targetMessageId ?? undefined;
+
+  for (const [index, segment] of parsed.segments.entries()) {
+    let sent = false;
+    let description = "";
+    
+    const segmentTargetMid = delivered.length === 0 ? targetMid : undefined;
+
+    try {
+      switch (segment.type) {
+        case "text":
+          description = segment.value;
+          sent = await sendText(segment.value, chatId, segmentTargetMid);
+          break;
+        case "sticker":
+          description = `[sticker: ${segment.intent}]`;
+          sent = await sendSticker(segment.intent, chatId, segmentTargetMid);
+          break;
+        case "gif":
+          description = `[gif: ${segment.intent}]`;
+          sent = await sendGIF(segment.intent, chatId, segmentTargetMid);
+          break;
+        case "voice":
+          description = `[voice: ${segment.text}]`;
+          sent = await sendVoiceNote(segment.text, chatId, segmentTargetMid);
+          break;
+        case "music":
+          description = `[music: ${segment.title}]`;
+          sent = await playMusic(segment.title, chatId);
+          break;
+      }
+    } catch (err) {
+      logger.error("Response segment execution threw", {
+        chatId,
+        segmentIndex: index,
+        segmentType: segment.type,
+        error: (err as Error).message,
+      });
+    }
+
+    if (sent) {
+      delivered.push(description);
+      logger.info("Response segment delivered", {
+        chatId,
+        segmentIndex: index,
+        segmentType: segment.type,
+      });
+    } else {
+      failed.push(description);
+      logger.warn("Response segment delivery failed; continuing remaining segments", {
+        chatId,
+        segmentIndex: index,
+        segmentType: segment.type,
+      });
+    }
+  }
+
+  if (!delivered.length) return null;
+
+  logger.info("Multimodal response execution completed", {
     chatId,
-    preview: trimmedReply.slice(0, 80),
+    segmentCount: parsed.segments.length,
+    deliveredCount: delivered.length,
+    failedCount: failed.length,
   });
 
-  const sent = await sendText(
-    trimmedReply,
-    chatId,
-    context.targetMessageId ?? undefined,
-  );
-
-  if (!sent) {
-    logger.warn("Text action delivery failed: sendText returned false", {
-      chatId,
-      targetMessageId: context.targetMessageId,
-      outcome: "delivery_failed",
-    });
-    return null;
-  }
-
-  logger.info("Text action completed successfully", {
-    chatId,
-    targetMessageId: context.targetMessageId,
-    outcome: "success",
-  });
-  return trimmedReply;
+  return delivered.join(" ");
 }

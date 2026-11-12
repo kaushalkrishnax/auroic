@@ -30,11 +30,11 @@ const SELECTORS = Object.freeze({
 
   // MESSAGE STRUCTURE
   //
-  // Each message row wraps a message article and its "[aria-label="Message actions"]'
-  // toolbar. Rows have no stable classes, so they are resolved dynamically from
-  // the message article (see messageRowOf in automation/chat.js). data-mid is
-  // stamped on the row so actions can target an individual message.
-  messageContainer: 'article[role="article"][aria-roledescription="message"]',
+  // Each message row wraps the message content and its "[aria-label="Message actions"]"
+  // toolbar. Rows in Instagram Web are div[role="group"][tabindex="-1"] (or article
+  // elements on certain builds). data-mid is stamped on the row so actions can target
+  // an individual message.
+  messageContainer: 'div[role="group"][tabindex="-1"], div[role="group"]:has([aria-label="Message actions"]), article[role="article"][aria-roledescription="message"]',
   messageText: 'div[dir="auto"]',
 
   // MESSAGE ACTIONS
@@ -50,7 +50,7 @@ const SELECTORS = Object.freeze({
 
   // COMPOSER
   messageComposer: '[data-pagelet="IGDComposerForCannes"]',
-  messageInput: '[role="textbox"][contenteditable="true"][data-lexical-editor="true"]',
+  messageInput: '[role="textbox"][contenteditable="true"][data-lexical-editor="true"], [role="textbox"][contenteditable="true"]',
 
   // COMPOSER ACTIONS
   chooseEmojiButton: 'div[role="button"]:has(svg[aria-label="Choose an emoji"])',

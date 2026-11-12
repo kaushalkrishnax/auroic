@@ -1,9 +1,7 @@
 import { sqliteTable, integer, text } from "drizzle-orm/sqlite-core";
 
-// We'll store the old runtime.json values in a single row (id=1)
-// as top-level JSON blobs to keep queries simple but structured
 export const settingsTable = sqliteTable("settings", {
-  id: integer("id").primaryKey(), // 1 for singleton
+  id: integer("id").primaryKey(),
   triggers: text("triggers", { mode: "json" }),
   llm: text("llm", { mode: "json" }),
   router: text("router", { mode: "json" }),
@@ -11,20 +9,20 @@ export const settingsTable = sqliteTable("settings", {
   instagram: text("instagram", { mode: "json" }),
   commands: text("commands", { mode: "json" }),
   tts: text("tts", { mode: "json" }),
+
   updatedAt: text("updated_at"),
 });
 
 export const commandsTable = sqliteTable("commands", {
   command: text("command").primaryKey(),
-  aliases: text("aliases", { mode: "json" }), // array of strings
-  filterKeywords: text("filter_keywords", { mode: "json" }), // array of strings
+  aliases: text("aliases", { mode: "json" }),
+  filterKeywords: text("filter_keywords", { mode: "json" }),
   handlerName: text("handler_name"),
-  isEnabled: integer("is_enabled", { mode: "boolean" }), // boolean
+  isEnabled: integer("is_enabled", { mode: "boolean" }),
   updatedAt: text("updated_at"),
 });
 
 export type SettingsRows = typeof settingsTable.$inferSelect;
 export type InsertSettingsRows = typeof settingsTable.$inferInsert;
-
 export type CommandRow = typeof commandsTable.$inferSelect;
 export type InsertCommandRow = typeof commandsTable.$inferInsert;

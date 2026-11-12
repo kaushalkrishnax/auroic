@@ -20,19 +20,19 @@ function isTargetChatOpen(chatId: string): boolean {
   return Boolean(page && page.url().includes(`/direct/t/${chatId}`));
 }
 
-async function visible(locator: Locator): Promise<boolean> {
+async function visible(locator: Locator, timeout = 2500): Promise<boolean> {
   try {
-    await locator.waitFor({ state: "visible" });
+    await locator.waitFor({ state: "visible", timeout });
     return (await locator.count()) > 0;
   } catch {
     return false;
   }
 }
 
-async function click(locator: Locator): Promise<boolean> {
-  if (!(await visible(locator))) return false;
+async function click(locator: Locator, timeout = 2500): Promise<boolean> {
+  if (!(await visible(locator, timeout))) return false;
   try {
-    await locator.click({ timeout: 2500 });
+    await locator.click({ timeout });
     return true;
   } catch {
     return false;
@@ -56,7 +56,7 @@ async function hover(locator: Locator): Promise<boolean> {
  */
 function messageRowOf(messageArticle: Locator): Locator {
   return messageArticle.locator(
-    'xpath=ancestor::*[.//*[@aria-label="Message actions"] and not(@data-pagelet="IGDMessagesList")][1]',
+    'xpath=ancestor-or-self::*[.//*[@aria-label="Message actions"] and not(@data-pagelet="IGDMessagesList")][1]',
   );
 }
 
@@ -462,7 +462,19 @@ export async function selectToReply(
     }
 
     const actionsGroup = row.locator(SELECTORS.messageActionsGroup);
-    if (!(await visible(actionsGroup))) {
+    let actionsReady = await visible(actionsGroup, 1500);
+    if (!actionsReady) {
+      const textElem = row.locator(SELECTORS.messageText).first();
+      if (await visible(textElem, 500)) {
+        await hover(textElem);
+      } else {
+        await row.dispatchEvent("mouseenter").catch(() => null);
+        await row.dispatchEvent("mouseover").catch(() => null);
+      }
+      actionsReady = await visible(actionsGroup, 1500);
+    }
+
+    if (!actionsReady) {
       logger.warn("Message actions group did not appear on hover", {
         targetMid,
       });
@@ -492,6 +504,16 @@ export async function selectToReply(
   } catch (err) {
     logger.warn("Reply setup failed", { error: (err as Error).message });
     return false;
+  }
+}
+
+async function clearNativeReplyContext(composer: Locator): Promise<void> {
+  const cancelReply = composer
+    .locator('[aria-label*="Cancel reply" i], [aria-label*="Remove reply" i]')
+    .first();
+  if (await click(cancelReply, 1000)) {
+    await sleep(100);
+    logger.info("Cleared stale native reply context before direct send");
   }
 }
 
@@ -1143,12 +1165,6 @@ async function openMediaTab(
 ): Promise<Locator | null> {
   const conversation = page.locator(SELECTORS.conversation).first();
   const composer = conversation.locator(SELECTORS.messageComposer).first();
-  const input = composer.locator(SELECTORS.messageInput).first();
-  if (!(await visible(input))) {
-    logger.warn("openMediaTab: message input not visible — composer not ready");
-    return null;
-  }
-
   let dialog = page
     .locator(SELECTORS.gifDialog)
     .filter({ has: page.locator(SELECTORS.mediaTabList) })
@@ -1157,25 +1173,25 @@ async function openMediaTab(
 
   if (!alreadyOpen) {
     const btn = composer.locator(SELECTORS.gifStickerButton).first();
-    if (!(await visible(btn))) {
+    if (!(await visible(btn, 3000))) {
       logger.warn("openMediaTab: GIF/sticker button not visible");
       return null;
     }
 
     try {
-      await btn.click();
+      await btn.click({ timeout: 4000, noWaitAfter: true });
     } catch (err) {
-      logger.warn("openMediaTab: GIF/sticker button click failed", {
+      logger.warn("openMediaTab: GIF/sticker button click failed, trying dispatchEvent", {
         error: (err as Error).message,
       });
-      return null;
+      await btn.dispatchEvent("click").catch(() => null);
     }
 
     dialog = page
       .locator(SELECTORS.gifDialog)
       .filter({ has: page.locator(SELECTORS.mediaTabList) })
       .last();
-    if (!(await visible(dialog))) {
+    if (!(await visible(dialog, 5000))) {
       logger.warn(
         "openMediaTab: dialog did not appear after GIF/sticker button click",
       );
@@ -1184,7 +1200,7 @@ async function openMediaTab(
   }
 
   const tabList = dialog.locator(SELECTORS.mediaTabList).first();
-  if (!(await visible(tabList))) {
+  if (!(await visible(tabList, 5000))) {
     logger.warn("openMediaTab: tab list not visible inside dialog", {
       tabIndex,
     });
@@ -1192,7 +1208,7 @@ async function openMediaTab(
   }
 
   const tab = tabList.locator(SELECTORS.mediaTab).nth(tabIndex);
-  if (!(await visible(tab))) {
+  if (!(await visible(tab, 5000))) {
     logger.warn("openMediaTab: target tab button not visible", { tabIndex });
     return null;
   }
@@ -1202,7 +1218,7 @@ async function openMediaTab(
 
   if (!isAlreadySelected) {
     try {
-      await tab.click();
+      await tab.click({ timeout: 3000, noWaitAfter: true });
     } catch {
       logger.warn("openMediaTab: tab click failed. Trying dispatchEvent.", {
         tabIndex,
@@ -1218,15 +1234,16 @@ async function openMediaTab(
       }
     }
 
-    const selected = await page
-      .waitForFunction(
-        (el) =>
-          (el as unknown as HTMLElement).getAttribute("aria-selected") === "true",
-        tab,
-        { timeout: 5000 },
-      )
-      .then(() => true)
-      .catch(() => false);
+    const deadline = Date.now() + 3000;
+    let selected = false;
+    while (Date.now() < deadline) {
+      const val = await tab.getAttribute("aria-selected").catch(() => null);
+      if (val === "true") {
+        selected = true;
+        break;
+      }
+      await sleep(100);
+    }
 
     if (!selected) {
       logger.warn("openMediaTab: tab did not become selected", { tabIndex });
@@ -1234,10 +1251,18 @@ async function openMediaTab(
     }
   }
 
-  const expectedInput =
-    tabIndex === 2 ? SELECTORS.musicSearchInput : SELECTORS.gifSearchInput;
-  const panelReady = dialog.locator(expectedInput).first();
-  if (!(await visible(panelReady))) {
+  const panelReady = dialog
+    .locator(
+      [
+        SELECTORS.stickerSearchInput,
+        SELECTORS.gifSearchInput,
+        SELECTORS.musicSearchInput,
+        SELECTORS.mediaItemButton,
+      ].join(", "),
+    )
+    .first();
+
+  if (!(await visible(panelReady, 5000))) {
     logger.warn("openMediaTab: tab panel content never appeared", {
       tabIndex,
     });
@@ -1348,68 +1373,55 @@ export async function sendText(
       return true;
     }
 
-    // Try native reply first
+    // Try native reply first. If it cannot be activated, send the text
+    // directly instead of replacing delivery with a mention fallback.
     const nativeReplyActivated = await selectToReply(chatId, targetMid);
 
-    if (nativeReplyActivated) {
-      if (!(await visible(input))) {
-        logger.warn("Message input not found after native reply");
-        return false;
-      }
-
-      const beforeCount = await messageList
-        .locator(SELECTORS.messageContainer)
-        .count();
-
-      await input.click();
-      await input.fill(trimmedText);
-      await input.press("Enter");
-
-      const verified = await verifyOutgoingSend(
-        page,
-        input,
-        beforeCount,
-        trimmedText,
-      );
-      if (!verified) {
-        logger.warn(
-          "Text message sent via native reply could not be verified",
-          { chatId, targetMid },
-        );
-        return false;
-      }
-
-      logger.info("Text message sent via native reply and verified", {
-        length: trimmedText.length,
-        reply: true,
+    if (!nativeReplyActivated) {
+      logger.warn("Native reply unavailable; sending text directly", {
+        chatId,
+        targetMid,
       });
-      return true;
+      await clearNativeReplyContext(composer);
+      return sendText(trimmedText, chatId);
     }
 
-    // Native reply failed - use mention fallback
-    logger.info(
-      "Native reply activation failed, attempting mention fallback",
-      { chatId, targetMid },
-    );
-    const fallbackSuccess = await sendTextWithMentionFallback(
+    if (!(await visible(input))) {
+      logger.warn("Message input not visible after native reply; sending directly", {
+        chatId,
+        targetMid,
+      });
+      await clearNativeReplyContext(composer);
+      return sendText(trimmedText, chatId);
+    }
+
+    const beforeCount = await messageList
+      .locator(SELECTORS.messageContainer)
+      .count();
+
+    await input.click();
+    await input.fill(trimmedText);
+    await input.press("Enter");
+
+    const verified = await verifyOutgoingSend(
+      page,
+      input,
+      beforeCount,
       trimmedText,
-      chatId,
-      targetMid,
     );
-
-    if (fallbackSuccess) {
-      logger.info("Text message sent via mention fallback", {
-        length: trimmedText.length,
-        reply: true,
-      });
-      return true;
+    if (!verified) {
+      logger.warn(
+        "Text message sent via native reply could not be verified",
+        { chatId, targetMid },
+      );
+      return false;
     }
 
-    logger.warn("Both native reply and mention fallback failed", {
-      chatId,
-      targetMid,
+    logger.info("Text message sent via native reply and verified", {
+      length: trimmedText.length,
+      reply: true,
     });
-    return false;
+    return true;
   } catch (err) {
     logger.warn("Send text failed", { error: (err as Error).message });
     return false;
@@ -1422,18 +1434,20 @@ export async function sendSticker(
   targetMid?: string,
 ): Promise<boolean> {
   try {
+    const page = requireChatPage(chatId);
+    let replyReady = false;
     if (targetMid) {
-      const replyReady = await selectToReply(chatId, targetMid);
+      replyReady = await selectToReply(chatId, targetMid);
       if (!replyReady) {
-        logger.warn(
-          "sendSticker: Reply context could not be established; aborting send",
-          { targetMid, chatId },
+        await clearNativeReplyContext(
+          page.locator(SELECTORS.messageComposer).first(),
         );
-        return false;
+        logger.warn("sendSticker: reply unavailable; sending directly", {
+          targetMid,
+          chatId,
+        });
       }
     }
-
-    const page = requireChatPage(chatId);
     const mediaDialog = await openMediaTab(page, 0);
     if (!mediaDialog) return false;
 
@@ -1463,7 +1477,7 @@ export async function sendSticker(
       return false;
     }
 
-    logger.info("Sticker sent and verified", { title, reply: !!targetMid });
+    logger.info("Sticker sent and verified", { title, reply: replyReady });
     return true;
   } catch (err) {
     logger.warn("Send Sticker failed", { error: (err as Error).message });
@@ -1496,6 +1510,7 @@ async function searchAndSelectGif(
   }
 
   await searchInput.fill(sanitizeMediaTitle(title));
+  await searchInput.press("Enter");
 
   // Scope result selection to the visible GIF results inside this dialog —
   // never a page-wide generic button:has(img) search.
@@ -1525,13 +1540,9 @@ async function searchAndSelectGif(
   const sendButton = mediaDialog
     .locator('div[role="button"][aria-label="Send"], div[role="button"]:has-text("Send")')
     .first();
-  if (await visible(sendButton)) return await click(sendButton);
+  if (await visible(sendButton, 2000)) return await click(sendButton);
 
-  logger.warn(
-    "searchAndSelectGif: GIF selected but no send control appeared",
-    { title },
-  );
-  return false;
+  return true;
 }
 
 export async function sendGIF(
@@ -1540,18 +1551,20 @@ export async function sendGIF(
   targetMid?: string,
 ): Promise<boolean> {
   try {
+    const page = requireChatPage(chatId);
+    let replyReady = false;
     if (targetMid) {
-      const replyReady = await selectToReply(chatId, targetMid);
+      replyReady = await selectToReply(chatId, targetMid);
       if (!replyReady) {
-        logger.warn(
-          "sendGIF: Reply context could not be established; aborting send",
-          { targetMid, chatId },
+        await clearNativeReplyContext(
+          page.locator(SELECTORS.messageComposer).first(),
         );
-        return false;
+        logger.warn("sendGIF: reply unavailable; sending directly", {
+          targetMid,
+          chatId,
+        });
       }
     }
-
-    const page = requireChatPage(chatId);
     const mediaDialog = await openGifPicker(page);
     if (!mediaDialog) return false;
 
@@ -1573,7 +1586,7 @@ export async function sendGIF(
       return false;
     }
 
-    logger.info("GIF sent and verified", { title, reply: !!targetMid });
+    logger.info("GIF sent and verified", { title, reply: replyReady });
     return true;
   } catch (err) {
     logger.warn("Send GIF failed", { error: (err as Error).message });
@@ -1587,18 +1600,20 @@ export async function sendStickerOrGIF(
   targetMid?: string,
 ): Promise<boolean> {
   try {
+    const page = requireChatPage(chatId);
+    let replyReady = false;
     if (targetMid) {
-      const replyReady = await selectToReply(chatId, targetMid);
+      replyReady = await selectToReply(chatId, targetMid);
       if (!replyReady) {
-        logger.warn(
-          "sendStickerOrGIF: Reply context could not be established; aborting send",
-          { targetMid, chatId },
+        await clearNativeReplyContext(
+          page.locator(SELECTORS.messageComposer).first(),
         );
-        return false;
+        logger.warn("sendStickerOrGIF: reply unavailable; sending directly", {
+          targetMid,
+          chatId,
+        });
       }
     }
-
-    const page = requireChatPage(chatId);
     const mediaDialog = await openGifPicker(page);
     if (!mediaDialog) return false;
 
@@ -1671,18 +1686,20 @@ export async function sendVoiceNote(
   targetMid?: string,
 ): Promise<boolean> {
   try {
+    const page = requireChatPage(chatId);
+    let replyReady = false;
     if (targetMid) {
-      const replyReady = await selectToReply(chatId, targetMid);
+      replyReady = await selectToReply(chatId, targetMid);
       if (!replyReady) {
-        logger.warn(
-          "sendVoiceNote: Reply context could not be established; aborting send",
-          { targetMid, chatId },
+        await clearNativeReplyContext(
+          page.locator(SELECTORS.messageComposer).first(),
         );
-        return false;
+        logger.warn("sendVoiceNote: reply unavailable; sending directly", {
+          targetMid,
+          chatId,
+        });
       }
     }
-
-    const page = requireChatPage(chatId);
     const conversation = page.locator(SELECTORS.conversation).first();
     const composer = conversation.locator(SELECTORS.messageComposer).first();
     const buffer = await generateSpeechBuffer(text);
@@ -1767,7 +1784,19 @@ export async function addReaction(
     if (!(await hover(row))) return false;
 
     const actionsGroup = row.locator(SELECTORS.messageActionsGroup);
-    if (!(await visible(actionsGroup))) {
+    let actionsReady = await visible(actionsGroup, 1500);
+    if (!actionsReady) {
+      const textElem = row.locator(SELECTORS.messageText).first();
+      if (await visible(textElem, 500)) {
+        await hover(textElem);
+      } else {
+        await row.dispatchEvent("mouseenter").catch(() => null);
+        await row.dispatchEvent("mouseover").catch(() => null);
+      }
+      actionsReady = await visible(actionsGroup, 1500);
+    }
+
+    if (!actionsReady) {
       logger.warn("Message actions group did not appear on hover", {
         targetMid,
       });

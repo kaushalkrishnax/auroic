@@ -38,10 +38,13 @@ function resolveFallbackModel(effort: EffortLevel, primaryModel: string): string
   return null;
 }
 
+export type ReplyFormat = "text" | "multimodal";
+
 export async function generateReply(
   history: string[],
   candidates: string[],
   effort: EffortLevel,
+  format: ReplyFormat = "text",
 ): Promise<string> {
   const config = getConfig();
   const primaryModel = resolveModel(effort);
@@ -75,26 +78,41 @@ export async function generateReply(
     // Prompt construction:
     // On retry, explicitly instruct the model to produce a concise user-facing reply with no thinking/prefix.
     const retryGuidance =
-      "IMPORTANT: Respond directly to the user with a concise, natural reply (2-12 words). " +
-      "Do NOT output internal reasoning, thinking tags (<think>), prefixes, or blank responses.";
+      format === "multimodal"
+        ? "Retry: produce a complete, natural response using only supported inline segments. Never omit required values or return an empty response."
+        : "IMPORTANT: Respond directly to the user with a concise, natural reply (2-12 words). Do NOT output internal reasoning, thinking tags (<think>), prefixes, or blank responses.";
 
     const contextPrompt = [
       recentHistory && `Recent conversation:\n${recentHistory}`,
       `Reply to: ${target}`,
       isRetry
         ? retryGuidance
-        : "Reply naturally. Do not start your reply with any tag, label, or prefix.",
+        : format === "multimodal"
+          ? "Reply naturally. You may interleave plain text with [sticker=Intent], [gif=Intent], [voice=TEXT], and [music=SONG_TITLE]. Use concise sticker and GIF search descriptions. Keep each segment self-contained. Do not wrap the response in a code block."
+          : "Reply naturally. Do not start your reply with any tag, label, or prefix.",
     ]
       .filter(Boolean)
       .join("\n\n");
 
+    const protocolInstructions = format === "multimodal"
+      ? "APPLICATION OUTPUT PROTOCOL (takes priority over conflicting formatting preferences): Return a single user-facing response. You may interleave plain text with [sticker=Intent] where Intent is a short description for Instagram sticker search; [gif=Intent] where Intent is a short visual search description; [voice=TEXT] where TEXT is the exact spoken text; and [music=SONG_TITLE] where SONG_TITLE is a song or artist search. Do not assume a saved sticker catalog exists. Do not explain the tokens or output JSON, code fences, or unrecognized tags. Preserve the persona, tone, language, and conversational behavior requested in the custom prompt."
+      : "";
+
     const messages: ChatMessage[] = [
-      { role: "system", content: config.llm.systemPrompt },
+      {
+        role: "system",
+        content: format === "multimodal"
+          ? `${protocolInstructions}\n\nUSER PERSONA AND STYLE PROMPT:\n${config.llm.systemPrompt}`
+          : config.llm.systemPrompt,
+      },
       { role: "user", content: contextPrompt },
     ];
 
     // If previous attempt was truncated by token limit, increase maxTokens headroom
     const options: ChatCompletionOptions = {};
+    if (format === "multimodal") {
+      options.maxTokens = Math.max(config.llm.output.maxTokens ?? 150, 500);
+    }
     if (lastFinishReason === "length") {
       options.maxTokens = Math.max((config.llm.output.maxTokens ?? 150) * 2, 250);
     }
@@ -106,6 +124,7 @@ export async function generateReply(
         model: currentModel,
         provider: providerUrl,
         attempt,
+        content: result.content,
         finishReason: result.finishReason ?? undefined,
         fallbackUsed: isFallback,
         finalOutcome: "success",

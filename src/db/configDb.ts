@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS settings (
   instagram TEXT,
   commands TEXT,
   tts TEXT,
+
+
   updated_at TEXT
 );
 
@@ -45,7 +47,6 @@ CREATE TABLE IF NOT EXISTS commands (
   updated_at TEXT
 );
 
--- Enforce global alias uniqueness: an alias may not appear in more than one command row
 CREATE TRIGGER IF NOT EXISTS enforce_unique_aliases_insert
 BEFORE INSERT ON commands
 FOR EACH ROW
@@ -85,6 +86,10 @@ function ensureSettingsColumns(sqlite: SQLiteConnection): void {
   if (!columnSet.has("tts")) {
     sqlite.exec("ALTER TABLE settings ADD COLUMN tts TEXT");
   }
+  if (columnSet.has("tagger")) {
+    sqlite.exec("ALTER TABLE settings DROP COLUMN tagger");
+  }
+
 }
 
 export function initConfigDB(dbPath: string): ConfigDrizzleDB {
@@ -97,13 +102,11 @@ export function initConfigDB(dbPath: string): ConfigDrizzleDB {
     const { Database } = require("bun:sqlite") as {
       Database: new (filename: string) => SQLiteConnection;
     };
-
     _sqlite = new Database(dbPath);
   } else {
     const BetterSQLite3 = require("better-sqlite3") as new (
       filename: string,
     ) => SQLiteConnection;
-
     _sqlite = new BetterSQLite3(dbPath);
   }
 

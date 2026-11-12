@@ -257,6 +257,39 @@ const frameToText = (payload: string | Buffer): string =>
     ? payload
     : Buffer.from(payload).toString("utf8");
 
+function extractJson(str: string, startIndex: number): string | null {
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+
+  for (let i = startIndex; i < str.length; i++) {
+    const char = str[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (char === "\\") {
+      escape = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (!inString) {
+      if (char === "{") {
+        depth++;
+      } else if (char === "}") {
+        depth--;
+        if (depth === 0) {
+          return str.slice(startIndex, i + 1);
+        }
+      }
+    }
+  }
+  return null;
+}
+
 const attachWebSocketListeners = (ws: WebSocket) => {
   logger.info("Instagram WebSocket connected", { url: ws.url() });
 
@@ -269,7 +302,12 @@ const attachWebSocketListeners = (ws: WebSocket) => {
         return;
       }
 
-      const envelope = JSON.parse(rawFrame.slice(jsonStart)) as {
+      const jsonStr = extractJson(rawFrame, jsonStart);
+      if (!jsonStr) {
+        return;
+      }
+
+      const envelope = JSON.parse(jsonStr) as {
         payload?: string;
       };
 
