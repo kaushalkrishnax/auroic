@@ -49,49 +49,60 @@ async function hover(locator: Locator): Promise<boolean> {
   }
 }
 
+/**
+ * Resolves the nearest row wrapper that contains both a message article and
+ * that article's "[aria-label="Message actions"]" toolbar, strictly within the
+ * message list.
+ */
+function messageRowOf(messageArticle: Locator): Locator {
+  return messageArticle.locator(
+    'xpath=ancestor::*[.//*[@aria-label="Message actions"] and not(@data-pagelet="IGDMessagesList")][1]',
+  );
+}
+
 async function findMessageContainer(
   chatId: string,
   targetMid?: string,
 ): Promise<Locator | null> {
   const page = requireChatPage(chatId);
+  const conversation = page.locator(SELECTORS.conversation).first();
+  const messageList = conversation.locator(SELECTORS.messageList).first();
 
   if (targetMid) {
     const escaped = targetMid.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-    const byMid = page.locator(`[data-mid="${escaped}"]`).first();
+    const byMid = messageList.locator(`[data-mid="${escaped}"]`).first();
     if ((await byMid.count()) > 0) return byMid;
   }
 
-  const allGroups = page
-    .locator(SELECTORS.messageList)
-    .locator(SELECTORS.messageGroup);
-  const groupCount = await allGroups.count();
-  if (!groupCount) {
-    logger.warn("No message groups found in DOM");
+  const articles = messageList.locator(SELECTORS.messageContainer);
+  const count = await articles.count();
+  if (!count) {
+    logger.warn("No messages found in DOM");
     return null;
   }
 
   const dbMessages = getLatestMessages(chatId, 10);
-  const take = Math.min(10, groupCount, dbMessages.length);
+  const take = Math.min(10, count, dbMessages.length);
   if (!take) {
     logger.warn("No messages to build window from", {
-      groupCount,
+      count,
       dbCount: dbMessages.length,
     });
     return null;
   }
 
-  const domGroups: Locator[] = [];
-  for (let i = groupCount - 1; i >= 0 && domGroups.length < take; i--) {
+  const domArticles: Locator[] = [];
+  for (let i = count - 1; i >= 0 && domArticles.length < take; i--) {
     try {
-      if (await allGroups.nth(i).isVisible())
-        domGroups.unshift(allGroups.nth(i));
+      if (await articles.nth(i).isVisible())
+        domArticles.unshift(articles.nth(i));
     } catch {}
   }
 
-  if (domGroups.length < take) {
-    domGroups.length = 0;
-    for (let i = groupCount - take; i < groupCount; i++)
-      domGroups.push(allGroups.nth(i));
+  if (domArticles.length < take) {
+    domArticles.length = 0;
+    for (let i = count - take; i < count; i++)
+      domArticles.push(articles.nth(i));
   }
 
   const dbSlice = dbMessages.slice(-take);
@@ -103,7 +114,7 @@ async function findMessageContainer(
     return null;
   }
 
-  return domGroups[index];
+  return messageRowOf(domArticles[index]);
 }
 
 async function setDataMidOnContainer(
@@ -163,10 +174,10 @@ export async function attachDataMidsForRecentWindow(
     try {
       const page = getAssignedPage(chatId);
       if (!page) return 0;
-      const groups = page
-        .locator(SELECTORS.messageList)
-        .locator(SELECTORS.messageGroup);
-      const groupCount = await groups.count();
+      const conversation = page.locator(SELECTORS.conversation).first();
+      const messageList = conversation.locator(SELECTORS.messageList).first();
+      const articles = messageList.locator(SELECTORS.messageContainer);
+      const groupCount = await articles.count();
       const dbMessages = getLatestMessages(chatId, windowSize);
       const take = Math.min(windowSize, groupCount, dbMessages.length);
 
@@ -183,7 +194,8 @@ export async function attachDataMidsForRecentWindow(
         Array.from({ length: take }, async (_, i) => {
           const mid = dbSlice[i]?.messageId;
           if (!mid) return;
-          const group = groups.nth(domStart + i);
+          const article = articles.nth(domStart + i);
+          const group = messageRowOf(article);
           try {
             const currentMid = await group.getAttribute("data-mid", {
               timeout: 3000,
@@ -261,13 +273,13 @@ export async function stampInitialDataMids(
     logger.warn("No tab assigned for initial data-mid stamping", { chatId });
     return;
   }
-  const allGroups = page
-    .locator(SELECTORS.messageList)
-    .locator(SELECTORS.messageGroup);
+  const conversation = page.locator(SELECTORS.conversation).first();
+  const messageList = conversation.locator(SELECTORS.messageList).first();
+  const allArticles = messageList.locator(SELECTORS.messageContainer);
   let stamped = 0;
 
   for (let attempt = 0; attempt < 4; attempt++) {
-    const groupCount = await allGroups.count();
+    const groupCount = await allArticles.count();
     if (!groupCount) {
       if (attempt < 3) {
         await sleep(100);
@@ -294,7 +306,8 @@ export async function stampInitialDataMids(
 
     await Promise.all(
       Array.from({ length: take }, async (_, i) => {
-        const group = allGroups.nth(domStart + i);
+        const article = allArticles.nth(domStart + i);
+        const group = messageRowOf(article);
         try {
           const existing = await group.getAttribute("data-mid", {
             timeout: 2000,
@@ -344,20 +357,21 @@ export async function getRecentDomMessages(
 ): Promise<DomMessageSnapshot[]> {
   const page = getAssignedPage(chatId);
   if (!page) return [];
-  const groups = page
-    .locator(SELECTORS.messageList)
-    .locator(SELECTORS.messageGroup);
-  const count = await groups.count();
+  const conversation = page.locator(SELECTORS.conversation).first();
+  const messageList = conversation.locator(SELECTORS.messageList).first();
+  const articles = messageList.locator(SELECTORS.messageContainer);
+  const count = await articles.count();
   if (!count || limit <= 0) return [];
 
   const start = Math.max(0, count - limit);
   const results: DomMessageSnapshot[] = [];
 
   for (let i = start; i < count; i++) {
-    const group = groups.nth(i);
+    const article = articles.nth(i);
+    const group = messageRowOf(article);
     const [mid, text] = await Promise.all([
       group.getAttribute("data-mid", { timeout: 5000 }).catch(() => null),
-      group
+      article
         .evaluate((el, textSelector) => {
           const all = Array.from(el.querySelectorAll(textSelector));
           const leaves = all.filter((n) => !n.querySelector(textSelector));
@@ -403,7 +417,8 @@ async function resolveTargetContainer(
   }
 
   const page = requireChatPage(chatId);
-  const messageList = page.locator(SELECTORS.messageList).first();
+  const conversation = page.locator(SELECTORS.conversation).first();
+  const messageList = conversation.locator(SELECTORS.messageList).first();
   try {
     await messageList.evaluate((el) => {
       if (el instanceof HTMLElement) el.scrollBy(0, -300);
@@ -430,27 +445,99 @@ export async function selectToReply(
 ): Promise<boolean> {
   if (!chatId || !targetMid) return true;
   try {
-    const msg = await resolveTargetContainer(chatId, targetMid);
-    if (!msg) {
+    const page = requireChatPage(chatId);
+    const conversation = page.locator(SELECTORS.conversation).first();
+    const composer = conversation.locator(SELECTORS.messageComposer).first();
+    const composerHtmlBefore = await readComposerHtml(composer);
+
+    const row = await resolveTargetContainer(chatId, targetMid);
+    if (!row) {
       logger.warn("Target message not found", { targetMid });
       return false;
     }
-    if (!(await hover(msg))) {
+
+    if (!(await hover(row))) {
       logger.warn("Target message hover failed", { targetMid });
       return false;
     }
 
-    const replyBtn = msg.locator(SELECTORS.replyButton).first();
-    if (await click(replyBtn)) {
-      logger.info("Reply mode activated", { targetMid });
+    const actionsGroup = row.locator(SELECTORS.messageActionsGroup);
+    if (!(await visible(actionsGroup))) {
+      logger.warn("Message actions group did not appear on hover", {
+        targetMid,
+      });
+      return false;
+    }
+
+    const replyBtn = actionsGroup.locator(SELECTORS.replyButton).first();
+    if (!(await click(replyBtn))) {
+      logger.warn("Reply button not found", { targetMid });
+      return false;
+    }
+
+    const activated = await isNativeReplyActive(
+      page,
+      targetMid,
+      composerHtmlBefore,
+    );
+    if (activated) {
+      logger.info("Reply mode activated and verified", { targetMid });
       return true;
     }
 
-    logger.warn("Reply button not found", { targetMid });
+    logger.warn("Reply button clicked but reply context did not activate", {
+      targetMid,
+    });
     return false;
   } catch (err) {
     logger.warn("Reply setup failed", { error: (err as Error).message });
     return false;
+  }
+}
+
+export async function openMoreOptions(
+  chatId: string,
+  targetMid: string,
+): Promise<Locator | null> {
+  if (!chatId || !targetMid) return null;
+  try {
+    const page = requireChatPage(chatId);
+    const row = await resolveTargetContainer(chatId, targetMid);
+    if (!row) {
+      logger.warn("Target message not found for more options", { targetMid });
+      return null;
+    }
+
+    if (!(await hover(row))) {
+      logger.warn("Target message hover failed for more options", { targetMid });
+      return null;
+    }
+
+    const actionsGroup = row.locator(SELECTORS.messageActionsGroup);
+    if (!(await visible(actionsGroup))) {
+      logger.warn("Message actions group did not appear on hover", {
+        targetMid,
+      });
+      return null;
+    }
+
+    const moreBtn = actionsGroup.locator(SELECTORS.moreOptionsButton).first();
+    if (!(await click(moreBtn))) {
+      logger.warn("More options button not found", { targetMid });
+      return null;
+    }
+
+    const menu = page.locator('[role="menu"], [role="dialog"]').last();
+    if (await visible(menu)) {
+      logger.info("More options menu opened", { targetMid });
+      return menu;
+    }
+
+    logger.warn("More options menu did not appear after click", { targetMid });
+    return null;
+  } catch (err) {
+    logger.warn("Open more options failed", { error: (err as Error).message });
+    return null;
   }
 }
 
@@ -786,14 +873,92 @@ async function ensureLiteralMention(
   return true;
 }
 
-async function waitForComposerCleared(input: Locator): Promise<boolean> {
-  const deadline = Date.now() + MENTION_WAIT_MS;
-  do {
-    if (!(await readComposerText(input)).trim()) return true;
-    await sleep(100);
-  } while (Date.now() < deadline);
+async function waitForComposerCleared(
+  input: Locator,
+  timeoutMs = 4000,
+): Promise<boolean> {
+  try {
+    return await input.evaluate(
+      (el, timeout) =>
+        new Promise<boolean>((resolve) => {
+          const isEmpty = () => {
+            const text = (
+              (el as HTMLElement).innerText ??
+              el.textContent ??
+              ""
+            ).trim();
+            return !text;
+          };
+          if (isEmpty()) return resolve(true);
 
-  return false;
+          const observer = new MutationObserver(() => {
+            if (isEmpty()) {
+              observer.disconnect();
+              resolve(true);
+            }
+          });
+          observer.observe(el, {
+            childList: true,
+            characterData: true,
+            subtree: true,
+          });
+
+          setTimeout(() => {
+            observer.disconnect();
+            resolve(isEmpty());
+          }, timeout);
+        }),
+      timeoutMs,
+    );
+  } catch {
+    const deadline = Date.now() + timeoutMs;
+    do {
+      const text = await readComposerText(input);
+      if (!text.trim()) return true;
+      await sleep(100);
+    } while (Date.now() < deadline);
+    return false;
+  }
+}
+
+async function waitForNewMessage(
+  page: Page,
+  beforeCount: number,
+  timeoutMs = 8000,
+): Promise<boolean> {
+  try {
+    await page.waitForFunction(
+      (payload: { sel: string; before: number }) =>
+        document.querySelectorAll(payload.sel).length > payload.before,
+      { sel: SELECTORS.messageContainer, before: beforeCount },
+      { timeout: timeoutMs },
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function verifyOutgoingSend(
+  page: Page,
+  input: Locator,
+  beforeCount: number,
+  expectedText?: string,
+  timeoutMs = 8000,
+): Promise<boolean> {
+  const cleared = await waitForComposerCleared(input, 3000);
+  if (!cleared) {
+    logger.warn("Composer did not clear after sending message");
+    return false;
+  }
+
+  const newMessage = await waitForNewMessage(page, beforeCount, timeoutMs);
+  if (!newMessage) {
+    logger.warn("New message did not appear in conversation after sending");
+    return false;
+  }
+
+  return true;
 }
 
 /**
@@ -819,7 +984,9 @@ async function sendTextWithMentionFallback(
     return false;
   }
 
-  const input = page.locator(SELECTORS.messageInput).first();
+  const conversation = page.locator(SELECTORS.conversation).first();
+  const composer = conversation.locator(SELECTORS.messageComposer).first();
+  const input = composer.locator(SELECTORS.messageInput).first();
   if (!(await focusComposer(input))) {
     logger.warn("Mention fallback: composer could not be focused", {
       chatId,
@@ -920,9 +1087,20 @@ async function sendTextWithMentionFallback(
       return false;
     }
 
+    const messageList = conversation.locator(SELECTORS.messageList).first();
+    const beforeCount = await messageList
+      .locator(SELECTORS.messageContainer)
+      .count();
+
     await input.press("Enter");
 
-    if (!(await waitForComposerCleared(input))) {
+    const verified = await verifyOutgoingSend(
+      page,
+      input,
+      beforeCount,
+      text,
+    );
+    if (!verified) {
       logger.warn("Mention fallback: send could not be verified", {
         chatId,
         targetMid,
@@ -932,7 +1110,7 @@ async function sendTextWithMentionFallback(
       return false;
     }
 
-    logger.info("Mention fallback: reply sent", {
+    logger.info("Mention fallback: reply sent and verified", {
       chatId,
       targetMid,
       username,
@@ -963,48 +1141,49 @@ async function openMediaTab(
   page: Page,
   tabIndex: number,
 ): Promise<Locator | null> {
-  const input = page.locator(SELECTORS.messageInput).first();
+  const conversation = page.locator(SELECTORS.conversation).first();
+  const composer = conversation.locator(SELECTORS.messageComposer).first();
+  const input = composer.locator(SELECTORS.messageInput).first();
   if (!(await visible(input))) {
     logger.warn("openMediaTab: message input not visible — composer not ready");
     return null;
   }
 
   let dialog = page
-    .locator(SELECTORS.dialog)
-    .filter({ has: page.locator(SELECTORS.tabList) })
+    .locator(SELECTORS.gifDialog)
+    .filter({ has: page.locator(SELECTORS.mediaTabList) })
     .last();
   const alreadyOpen = await dialog.isVisible().catch(() => false);
 
   if (!alreadyOpen) {
-    const btn = page.locator(SELECTORS.mediaButton).first();
+    const btn = composer.locator(SELECTORS.gifStickerButton).first();
     if (!(await visible(btn))) {
-      logger.warn("openMediaTab: media button not visible");
+      logger.warn("openMediaTab: GIF/sticker button not visible");
       return null;
     }
 
     try {
       await btn.click();
     } catch (err) {
-      logger.warn("openMediaTab: media button click failed", {
+      logger.warn("openMediaTab: GIF/sticker button click failed", {
         error: (err as Error).message,
       });
       return null;
     }
 
-    await sleep(200);
     dialog = page
-      .locator(SELECTORS.dialog)
-      .filter({ has: page.locator(SELECTORS.tabList) })
+      .locator(SELECTORS.gifDialog)
+      .filter({ has: page.locator(SELECTORS.mediaTabList) })
       .last();
     if (!(await visible(dialog))) {
       logger.warn(
-        "openMediaTab: dialog did not appear after media button click",
+        "openMediaTab: dialog did not appear after GIF/sticker button click",
       );
       return null;
     }
   }
 
-  const tabList = dialog.locator(SELECTORS.tabList).first();
+  const tabList = dialog.locator(SELECTORS.mediaTabList).first();
   if (!(await visible(tabList))) {
     logger.warn("openMediaTab: tab list not visible inside dialog", {
       tabIndex,
@@ -1012,44 +1191,56 @@ async function openMediaTab(
     return null;
   }
 
-  const tab = tabList.locator(SELECTORS.mediaTabButton).nth(tabIndex);
+  const tab = tabList.locator(SELECTORS.mediaTab).nth(tabIndex);
   if (!(await visible(tab))) {
     logger.warn("openMediaTab: target tab button not visible", { tabIndex });
     return null;
   }
 
-  try {
-    await tab.click({ force: true, timeout: 5000 });
-  } catch {
-    logger.warn(
-      "openMediaTab: tab click failed with force: true. Trying dispatchEvent.",
-      { tabIndex },
-    );
+  const isAlreadySelected =
+    (await tab.getAttribute("aria-selected").catch(() => null)) === "true";
+
+  if (!isAlreadySelected) {
     try {
-      await tab.dispatchEvent("click");
-    } catch (dispatchErr) {
-      logger.warn("openMediaTab: dispatchEvent click also failed", {
+      await tab.click();
+    } catch {
+      logger.warn("openMediaTab: tab click failed. Trying dispatchEvent.", {
         tabIndex,
-        error: (dispatchErr as Error).message,
       });
+      try {
+        await tab.dispatchEvent("click");
+      } catch (dispatchErr) {
+        logger.warn("openMediaTab: dispatchEvent click also failed", {
+          tabIndex,
+          error: (dispatchErr as Error).message,
+        });
+        return null;
+      }
+    }
+
+    const selected = await page
+      .waitForFunction(
+        (el) =>
+          (el as unknown as HTMLElement).getAttribute("aria-selected") === "true",
+        tab,
+        { timeout: 5000 },
+      )
+      .then(() => true)
+      .catch(() => false);
+
+    if (!selected) {
+      logger.warn("openMediaTab: tab did not become selected", { tabIndex });
       return null;
     }
   }
 
-  await sleep(200);
-
-  const panelReady = dialog
-    .locator(
-      [
-        SELECTORS.stickerSearchInput,
-        SELECTORS.gifSearchInput,
-        SELECTORS.musicSearchInput,
-        SELECTORS.mediaItemButton,
-      ].join(", "),
-    )
-    .first();
+  const expectedInput =
+    tabIndex === 2 ? SELECTORS.musicSearchInput : SELECTORS.gifSearchInput;
+  const panelReady = dialog.locator(expectedInput).first();
   if (!(await visible(panelReady))) {
-    logger.warn("openMediaTab: tab panel content never appeared", { tabIndex });
+    logger.warn("openMediaTab: tab panel content never appeared", {
+      tabIndex,
+    });
     return null;
   }
 
@@ -1058,7 +1249,9 @@ async function openMediaTab(
 }
 
 async function closeMediaByFocusingComposer(page: Page): Promise<void> {
-  const input = page.locator(SELECTORS.messageInput).first();
+  const conversation = page.locator(SELECTORS.conversation).first();
+  const composer = conversation.locator(SELECTORS.messageComposer).first();
+  const input = composer.locator(SELECTORS.messageInput).first();
   if (!(await visible(input))) {
     logger.warn("Cannot close media tab via message input: input not visible");
     return;
@@ -1089,22 +1282,12 @@ async function searchAndSelectMedia(
   await searchInput.fill(sanitizeMediaTitle(title));
 
   const items = mediaDialog.locator(SELECTORS.mediaItemButton);
-  let appeared = false;
-  
-  for (let i = 0; i < 3; i++) {
-    if (await visible(items.first())) {
-      appeared = true;
-      break;
-    }
-    await sleep(200);
-  }
-
-  if (!appeared) {
+  try {
+    await items.first().waitFor({ state: "visible", timeout: 6000 });
+  } catch {
     logger.warn("searchAndSelectMedia: no results appeared", { title });
     return false;
   }
-
-  await sleep(200)
 
   const count = await items.count();
   const cap = maxRandomIndex > 0 ? Math.min(maxRandomIndex, count) : count;
@@ -1127,20 +1310,38 @@ export async function sendText(
     }
 
     const page = requireChatPage(chatId);
+    const conversation = page.locator(SELECTORS.conversation).first();
+    const composer = conversation.locator(SELECTORS.messageComposer).first();
+    const input = composer.locator(SELECTORS.messageInput).first();
+    const messageList = conversation.locator(SELECTORS.messageList).first();
 
     // If no targetMid, just send as normal message (no reply)
     if (!targetMid) {
-      const input = page.locator(SELECTORS.messageInput).first();
       if (!(await visible(input))) {
         logger.warn("Message input not found");
         return false;
       }
 
+      const beforeCount = await messageList
+        .locator(SELECTORS.messageContainer)
+        .count();
+
       await input.click();
       await input.fill(trimmedText);
       await input.press("Enter");
 
-      logger.info("Text message sent", {
+      const verified = await verifyOutgoingSend(
+        page,
+        input,
+        beforeCount,
+        trimmedText,
+      );
+      if (!verified) {
+        logger.warn("Text message send could not be verified", { chatId });
+        return false;
+      }
+
+      logger.info("Text message sent and verified", {
         length: trimmedText.length,
         reply: false,
       });
@@ -1148,29 +1349,37 @@ export async function sendText(
     }
 
     // Try native reply first
-    const composerHtmlBefore = await readComposerHtml(
-      page.locator(SELECTORS.messageComposer).first(),
-    );
     const nativeReplyActivated = await selectToReply(chatId, targetMid);
 
-    // Verify native reply context is actually active
-    const isReplyActive =
-      nativeReplyActivated &&
-      (await isNativeReplyActive(page, targetMid, composerHtmlBefore));
-
-    if (isReplyActive) {
-      // Native reply worked - use existing flow
-      const input = page.locator(SELECTORS.messageInput).first();
+    if (nativeReplyActivated) {
       if (!(await visible(input))) {
         logger.warn("Message input not found after native reply");
         return false;
       }
 
+      const beforeCount = await messageList
+        .locator(SELECTORS.messageContainer)
+        .count();
+
       await input.click();
       await input.fill(trimmedText);
       await input.press("Enter");
 
-      logger.info("Text message sent via native reply", {
+      const verified = await verifyOutgoingSend(
+        page,
+        input,
+        beforeCount,
+        trimmedText,
+      );
+      if (!verified) {
+        logger.warn(
+          "Text message sent via native reply could not be verified",
+          { chatId, targetMid },
+        );
+        return false;
+      }
+
+      logger.info("Text message sent via native reply and verified", {
         length: trimmedText.length,
         reply: true,
       });
@@ -1178,8 +1387,15 @@ export async function sendText(
     }
 
     // Native reply failed - use mention fallback
-    logger.info("Native reply activation failed, attempting mention fallback", { chatId, targetMid });
-    const fallbackSuccess = await sendTextWithMentionFallback(trimmedText, chatId, targetMid);
+    logger.info(
+      "Native reply activation failed, attempting mention fallback",
+      { chatId, targetMid },
+    );
+    const fallbackSuccess = await sendTextWithMentionFallback(
+      trimmedText,
+      chatId,
+      targetMid,
+    );
 
     if (fallbackSuccess) {
       logger.info("Text message sent via mention fallback", {
@@ -1189,7 +1405,10 @@ export async function sendText(
       return true;
     }
 
-    logger.warn("Both native reply and mention fallback failed", { chatId, targetMid });
+    logger.warn("Both native reply and mention fallback failed", {
+      chatId,
+      targetMid,
+    });
     return false;
   } catch (err) {
     logger.warn("Send text failed", { error: (err as Error).message });
@@ -1203,8 +1422,26 @@ export async function sendSticker(
   targetMid?: string,
 ): Promise<boolean> {
   try {
-    const mediaDialog = await openMediaTab(requireChatPage(chatId), 0);
+    if (targetMid) {
+      const replyReady = await selectToReply(chatId, targetMid);
+      if (!replyReady) {
+        logger.warn(
+          "sendSticker: Reply context could not be established; aborting send",
+          { targetMid, chatId },
+        );
+        return false;
+      }
+    }
+
+    const page = requireChatPage(chatId);
+    const mediaDialog = await openMediaTab(page, 0);
     if (!mediaDialog) return false;
+
+    const conversation = page.locator(SELECTORS.conversation).first();
+    const messageList = conversation.locator(SELECTORS.messageList).first();
+    const beforeCount = await messageList
+      .locator(SELECTORS.messageContainer)
+      .count();
 
     const success = await searchAndSelectMedia(
       mediaDialog,
@@ -1212,17 +1449,89 @@ export async function sendSticker(
       title,
       4,
     );
-    if (success) {
-      logger.info("Sticker sent", { title, reply: !!targetMid });
-      return true;
+    if (!success) {
+      logger.warn("No sticker results found for title", { title });
+      return false;
     }
 
-    logger.warn("No sticker results found for title", { title });
-    return false;
+    const verified = await waitForNewMessage(page, beforeCount);
+    if (!verified) {
+      logger.warn("Sticker selected but did not appear in conversation", {
+        title,
+        chatId,
+      });
+      return false;
+    }
+
+    logger.info("Sticker sent and verified", { title, reply: !!targetMid });
+    return true;
   } catch (err) {
     logger.warn("Send Sticker failed", { error: (err as Error).message });
     return false;
   }
+}
+
+/**
+ * Opens the GIF/sticker picker from the composer, selects the GIF tab (the
+ * second tab — stickers are selected by default) and confirms it is the
+ * selected tab before returning the dialog locator.
+ */
+async function openGifPicker(page: Page): Promise<Locator | null> {
+  return openMediaTab(page, 1);
+}
+
+/**
+ * Enters a query, waits for GIF results, and selects the first result. A
+ * selected GIF either sends immediately (dialog closes) or exposes a
+ * confirmation/send control — both paths are handled.
+ */
+async function searchAndSelectGif(
+  mediaDialog: Locator,
+  title: string,
+): Promise<boolean> {
+  const searchInput = mediaDialog.locator(SELECTORS.gifSearchInput).first();
+  if (!(await visible(searchInput))) {
+    logger.warn("searchAndSelectGif: search input not visible");
+    return false;
+  }
+
+  await searchInput.fill(sanitizeMediaTitle(title));
+
+  // Scope result selection to the visible GIF results inside this dialog —
+  // never a page-wide generic button:has(img) search.
+  const results = mediaDialog.locator(SELECTORS.mediaItemButton);
+  try {
+    await results.first().waitFor({ state: "visible", timeout: 6000 });
+  } catch {
+    logger.warn("searchAndSelectGif: no GIF results appeared", { title });
+    return false;
+  }
+
+  if (!(await click(results.first()))) {
+    logger.warn("searchAndSelectGif: could not select a GIF result", {
+      title,
+    });
+    return false;
+  }
+
+  // A selected GIF either sends immediately (dialog closes) or exposes a
+  // send control. Handle both without assuming either.
+  const sentImmediately = await mediaDialog
+    .waitFor({ state: "hidden", timeout: 4000 })
+    .then(() => true)
+    .catch(() => false);
+  if (sentImmediately) return true;
+
+  const sendButton = mediaDialog
+    .locator('div[role="button"][aria-label="Send"], div[role="button"]:has-text("Send")')
+    .first();
+  if (await visible(sendButton)) return await click(sendButton);
+
+  logger.warn(
+    "searchAndSelectGif: GIF selected but no send control appeared",
+    { title },
+  );
+  return false;
 }
 
 export async function sendGIF(
@@ -1231,24 +1540,41 @@ export async function sendGIF(
   targetMid?: string,
 ): Promise<boolean> {
   try {
-    await selectToReply(chatId, targetMid);
-
-    const mediaDialog = await openMediaTab(requireChatPage(chatId), 1);
-    if (!mediaDialog) return false;
-
-    const success = await searchAndSelectMedia(
-      mediaDialog,
-      SELECTORS.gifSearchInput,
-      title,
-      6,
-    );
-    if (success) {
-      logger.info("GIF sent", { title, reply: !!targetMid });
-      return true;
+    if (targetMid) {
+      const replyReady = await selectToReply(chatId, targetMid);
+      if (!replyReady) {
+        logger.warn(
+          "sendGIF: Reply context could not be established; aborting send",
+          { targetMid, chatId },
+        );
+        return false;
+      }
     }
 
-    logger.warn("No GIF results found for title", { title });
-    return false;
+    const page = requireChatPage(chatId);
+    const mediaDialog = await openGifPicker(page);
+    if (!mediaDialog) return false;
+
+    const conversation = page.locator(SELECTORS.conversation).first();
+    const messageList = conversation.locator(SELECTORS.messageList).first();
+    const beforeCount = await messageList
+      .locator(SELECTORS.messageContainer)
+      .count();
+
+    const selected = await searchAndSelectGif(mediaDialog, title);
+    if (!selected) return false;
+
+    const verified = await waitForNewMessage(page, beforeCount);
+    if (!verified) {
+      logger.warn("GIF was selected but did not appear in the conversation", {
+        title,
+        chatId,
+      });
+      return false;
+    }
+
+    logger.info("GIF sent and verified", { title, reply: !!targetMid });
+    return true;
   } catch (err) {
     logger.warn("Send GIF failed", { error: (err as Error).message });
     return false;
@@ -1261,65 +1587,42 @@ export async function sendStickerOrGIF(
   targetMid?: string,
 ): Promise<boolean> {
   try {
-    const replyReady = await selectToReply(chatId, targetMid);
-    if (targetMid && !replyReady) return false;
+    if (targetMid) {
+      const replyReady = await selectToReply(chatId, targetMid);
+      if (!replyReady) {
+        logger.warn(
+          "sendStickerOrGIF: Reply context could not be established; aborting send",
+          { targetMid, chatId },
+        );
+        return false;
+      }
+    }
 
     const page = requireChatPage(chatId);
-    const mediaDialog = await openMediaTab(page, 0);
+    const mediaDialog = await openGifPicker(page);
     if (!mediaDialog) return false;
 
-    const stickerHit = await searchAndSelectMedia(
-      mediaDialog,
-      SELECTORS.stickerSearchInput,
-      title,
-      4,
-    );
-    if (stickerHit) {
-      logger.info("Sticker sent", { title, reply: !!targetMid });
-      return true;
-    }
+    const conversation = page.locator(SELECTORS.conversation).first();
+    const messageList = conversation.locator(SELECTORS.messageList).first();
+    const beforeCount = await messageList
+      .locator(SELECTORS.messageContainer)
+      .count();
 
-    const gifTab = mediaDialog
-      .locator(SELECTORS.tabList)
-      .first()
-      .locator(SELECTORS.mediaTabButton)
-      .nth(1);
-    if (!(await visible(gifTab))) {
-      logger.warn("sendStickerOrGIF: GIF tab not visible");
-      return false;
-    }
+    const selected = await searchAndSelectGif(mediaDialog, title);
+    if (!selected) return false;
 
-    try {
-      await gifTab.click();
-    } catch (err) {
-      logger.warn("sendStickerOrGIF: GIF tab click failed", {
-        error: (err as Error).message,
+    const verified = await waitForNewMessage(page, beforeCount);
+    if (!verified) {
+      logger.warn("Sticker/GIF selected but did not appear in conversation", {
+        title,
+        chatId,
       });
       return false;
     }
 
-    if (
-      !(await visible(mediaDialog.locator(SELECTORS.gifSearchInput).first()))
-    ) {
-      logger.warn("sendStickerOrGIF: GIF tab panel did not render");
-      return false;
-    }
-
-    const gifHit = await searchAndSelectMedia(
-      mediaDialog,
-      SELECTORS.gifSearchInput,
-      title,
-      6,
-    );
-    if (gifHit) {
-      logger.info("GIF sent (fallback)", { title, reply: !!targetMid });
-      return true;
-    }
-
-    logger.warn("No sticker or GIF results found", { title });
-    return false;
+    return true;
   } catch (err) {
-    logger.warn("sendStickerOrGIF failed", { error: (err as Error).message });
+    logger.warn("Send sticker/GIF failed", { error: (err as Error).message });
     return false;
   }
 }
@@ -1368,7 +1671,20 @@ export async function sendVoiceNote(
   targetMid?: string,
 ): Promise<boolean> {
   try {
+    if (targetMid) {
+      const replyReady = await selectToReply(chatId, targetMid);
+      if (!replyReady) {
+        logger.warn(
+          "sendVoiceNote: Reply context could not be established; aborting send",
+          { targetMid, chatId },
+        );
+        return false;
+      }
+    }
+
     const page = requireChatPage(chatId);
+    const conversation = page.locator(SELECTORS.conversation).first();
+    const composer = conversation.locator(SELECTORS.messageComposer).first();
     const buffer = await generateSpeechBuffer(text);
 
     await page.evaluate(async (audioData) => {
@@ -1390,9 +1706,6 @@ export async function sendVoiceNote(
       );
     }, Array.from(buffer));
 
-    await selectToReply(chatId, targetMid);
-
-    const composer = page.locator(SELECTORS.messageComposer).first();
     await page.waitForTimeout(300);
 
     if (!(await click(composer.locator(SELECTORS.voiceNoteButton).first())))
@@ -1413,12 +1726,22 @@ export async function sendVoiceNote(
 
     await page.waitForTimeout(durationSec * 1000 + 200);
 
+    const messageList = conversation.locator(SELECTORS.messageList).first();
+    const beforeCount = await messageList
+      .locator(SELECTORS.messageContainer)
+      .count();
+
     if (!(await click(composer.locator(SELECTORS.sendVoiceNoteButton).first())))
       return false;
 
     await page.evaluate(() => {
       (window as any).currentAudioBuffer = null;
     });
+
+    const verified = await waitForNewMessage(page, beforeCount);
+    if (!verified) {
+      logger.warn("Voice note sent but did not appear in conversation");
+    }
 
     logger.info("Voice note sent successfully");
     return true;
@@ -1436,14 +1759,22 @@ export async function addReaction(
   if (!chatId || !targetMid) return false;
   try {
     const page = requireChatPage(chatId);
-    const msg = await resolveTargetContainer(chatId, targetMid);
-    if (!msg) {
+    const row = await resolveTargetContainer(chatId, targetMid);
+    if (!row) {
       logger.warn("Target message not found", { targetMid });
       return false;
     }
-    if (!(await hover(msg))) return false;
+    if (!(await hover(row))) return false;
 
-    if (!(await click(msg.locator(SELECTORS.reactButton).first()))) {
+    const actionsGroup = row.locator(SELECTORS.messageActionsGroup);
+    if (!(await visible(actionsGroup))) {
+      logger.warn("Message actions group did not appear on hover", {
+        targetMid,
+      });
+      return false;
+    }
+
+    if (!(await click(actionsGroup.locator(SELECTORS.reactButton).first()))) {
       logger.warn("React button not found", { targetMid });
       return false;
     }
@@ -1462,6 +1793,9 @@ export async function addReaction(
       )
     ) {
       logger.info("Selected quick emoji reaction", { reactionEmoji });
+      await quickPicker
+        .waitFor({ state: "hidden", timeout: 3000 })
+        .catch(() => null);
       return true;
     }
 
@@ -1497,6 +1831,9 @@ export async function addReaction(
       )
     ) {
       logger.info("Selected emoji reaction via full picker", { reactionEmoji });
+      await fullPicker
+        .waitFor({ state: "hidden", timeout: 3000 })
+        .catch(() => null);
       return true;
     }
 

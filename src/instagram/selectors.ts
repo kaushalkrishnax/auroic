@@ -3,84 +3,81 @@
  * Uses valid CSS selectors compatible with Playwright.
  */
 
+
 const SELECTORS = Object.freeze({
-  /* AUTH */
-
+  // AUTH
   emailInput: 'input[name="username"], input[name="email"]',
-
   passwordInput: 'input[name="password"], input[name="pass"]',
-
   submitButton: 'button[type="submit"], div[role="button"][aria-label*="Log"]',
+  continueButton: 'div[role="button"][aria-label*="Continue"]',
+  notNowButton: 'button:has-text("Not Now"), div[role="button"]:has-text("Not Now")',
+  saveInfoButton: 'button:has-text("Save Info"), div[role="button"]:has-text("Save Info")',
 
-  continueButton:
-    'div[role="button"][aria-label*="Continue"], div[role="button"]:has(span:has-text("Continue"))',
+  // COMPOSER ACTIONS
+  voiceNoteButton: 'div[role="button"]:has(svg[aria-label="Voice Clip"])',
+  sendVoiceNoteButton: 'div[role="button"][aria-label="Send"]',
 
-  notNowButton:
-    'button:has-text("Not Now"), div[role="button"]:has-text("Not Now")',
+  // NAVIGATION
+  threadList: 'div[role="navigation"][aria-label="Thread list"]',
+  conversation: 'main[role="main"]',
+  dialog: '[role="dialog"]',
 
-  saveInfoButton:
-    'button:has-text("Save Info"), div[role="button"]:has-text("Save Info")',
+  // CONVERSATION HEADER
+  conversationInfoButton: 'div[role="button"][aria-label="Conversation information"]',
 
-  voiceNoteButton: 'div[role="button"]:has(svg[aria-label*="Voice Clip"])',
-
-  sendVoiceNoteButton: 'div[role="button"]:has-text("Send")',
-
-  /* NAVIGATION */
-
-  threadList: 'div[aria-label="Thread list"][role="navigation"]',
-
+  // MESSAGE LIST
   messageList: '[data-pagelet="IGDMessagesList"]',
 
-  tabList: 'div[role="tablist"]',
+  // MESSAGE STRUCTURE
+  //
+  // Each message row wraps a message article and its "[aria-label="Message actions"]'
+  // toolbar. Rows have no stable classes, so they are resolved dynamically from
+  // the message article (see messageRowOf in automation/chat.js). data-mid is
+  // stamped on the row so actions can target an individual message.
+  messageContainer: 'article[role="article"][aria-roledescription="message"]',
+  messageText: 'div[dir="auto"]',
 
-  dialog: 'div[role="dialog"]',
+  // MESSAGE ACTIONS
+  //
+  // All three buttons must be scoped to a single message's action group
+  // (row.locator(SELECTORS.messageActionsGroup)), never queried page-wide.
+  // messageActionsGroup is the toolbar; moreOptionsButton is the three-dot
+  // button inside it — they are distinct concepts.
+  messageActionsGroup: '[role="group"][aria-label="Message actions"]',
+  reactButton: 'div[role="button"][aria-label^="React to message"], div[role="button"][aria-label*="React" i]',
+  replyButton: 'div[role="button"][aria-label^="Reply to message"], div[role="button"][aria-label*="Reply" i]',
+  moreOptionsButton: 'div[role="button"][aria-label^="See more options for message"], div[role="button"][aria-label*="more options" i]',
 
-  /* MESSAGE STRUCTURE */
+  // COMPOSER
+  messageComposer: '[data-pagelet="IGDComposerForCannes"]',
+  messageInput: '[role="textbox"][contenteditable="true"][data-lexical-editor="true"]',
 
-  messageGroup: 'div[role="group"]',
+  // COMPOSER ACTIONS
+  chooseEmojiButton: 'div[role="button"]:has(svg[aria-label="Choose an emoji"])',
+  mediaButton: 'div[role="button"]:has(svg[aria-label="Add Photo or Video"])',
+  gifStickerButton: 'div[role="button"]:has(svg[aria-label="Choose a GIF or sticker"])',
 
-  messageText: '[dir="auto"]',
+  // GIF / STICKER PICKER
+  //
+  // Picker lookups are scoped to a visible dialog locator. Do not prefix these
+  // selectors with "[role="dialog"] when used with dialog.locator(), and never
+  // run them page-wide.
+  gifDialog: '[role="dialog"]',
+  mediaTabList: '[role="tablist"]',
+  mediaTab: '[role="tab"]',
+  gifSearchInput: 'input[name="GifSearch"]',
 
-  messageInput: '[role="textbox"]',
+  // SEARCH INPUTS
+  emojiSearchInput: 'input[placeholder="Search emoji"], input[aria-label*="Search emoji"]',
+  stickerSearchInput: 'input[placeholder="Search stickers"], input[aria-label*="Search stickers"]',
+  musicSearchInput: 'input[placeholder="Search music"], input[aria-label*="Search music"]',
 
-  messageComposer: 'div[data-pagelet="IGDComposerForCannes"]',
+  // MEDIA PICKER
+  // Result tiles, scoped to the picker dialog. Never used page-wide.
+  mediaItemButton: 'div[role="button"]:not([role="tab"]):has(img), div[role="button"]:not([role="tab"]):has(video)',
+  musicSendButton: 'div[role="button"]:has(div[role="button"]:has(svg[data-name*="Layer 1"]))',
 
-  /* SEARCH INPUTS */
-
-  emojiSearchInput:
-    'input[placeholder="Search emoji"], input[aria-label*="Search emoji"]',
-
-  stickerSearchInput:
-    'input[placeholder="Search stickers"], input[aria-label*="Search stickers"]',
-
-  musicSearchInput:
-    'input[placeholder="Search music"], input[aria-label*="Search music"]',
-
-  gifSearchInput:
-    'input[placeholder="Search GIPHY"], input[aria-label*="Search GIPHY"]',
-
-  /* MESSAGE ACTIONS */
-
-  replyButton: 'div[role="button"]:has(svg[aria-label*="Reply"])',
-
-  reactButton: 'div[role="button"]:has(svg[aria-label*="React"])',
-
-  /* MEDIA PICKER */
-
-  mediaButton:
-    'div[role="button"]:has(svg[aria-label*="GIF"]), div[role="button"]:has(svg[aria-label*="sticker"])',
-
-  mediaTabButton: 'a[role="tab"]:has(svg)',
-
-  mediaItemButton: 'div[role="button"]:has(img), div[role="button"]:has(video)',
-
-  musicSendButton:
-    'div[role="button"]:has(div[role="button"]:has(svg[data-name*="Layer 1"]))',
-
-  /* EMOJI PICKER */
-
-  chooseEmojiButton: 'svg[aria-label*="emoji"]',
-
+  // MODALS
   closeModal: '[aria-label*="Close"], [aria-label*="Dismiss"]',
 });
 

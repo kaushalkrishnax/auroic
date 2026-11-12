@@ -287,12 +287,13 @@ class TabPool {
       timeout: NAV_TIMEOUT_MS,
     });
 
-    const input = page.locator(SELECTORS.messageInput).first();
+    const conversation = page.locator(SELECTORS.conversation).first();
+    const composer = conversation.locator(SELECTORS.messageComposer).first();
+    const input = composer.locator(SELECTORS.messageInput).first();
     await input.waitFor({ state: "visible", timeout: READY_TIMEOUT_MS });
 
-    const groups = page
-      .locator(SELECTORS.messageList)
-      .locator(SELECTORS.messageGroup);
+    const messageList = conversation.locator(SELECTORS.messageList).first();
+    const groups = messageList.locator(SELECTORS.messageContainer);
     await groups.first().waitFor({ state: "visible", timeout: READY_TIMEOUT_MS });
 
     entry.ready = true;
