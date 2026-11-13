@@ -49,7 +49,15 @@ export async function executeAction(
       });
 
       try {
-        await runWithChatPage(context.chatId, () => executeCommand(context));
+        const executed = await runWithChatPage(context.chatId, () =>
+          executeCommand(context),
+        );
+        if (!executed) {
+          logger.warn("Command did not complete successfully", {
+            commandName: classifiedCommand.commandName,
+          });
+          return null;
+        }
         logger.info("Command execution complete", {
           commandName: classifiedCommand.commandName,
         });

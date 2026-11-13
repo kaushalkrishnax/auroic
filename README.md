@@ -51,7 +51,9 @@ All processing is local. Credentials stay in your browser profile.
 - **Local router** for fast low-cost action selection
 - **Context-aware text replies** via OpenAI-compatible APIs
 - **Media actions**: reactions, GIFs, stickers, voice notes, and music
-- **Optional local TTS** via Kokoro ONNX service
+- **Multimodal replies**: text interleaved with sticker/GIF/voice/music segments
+- **Optional local TTS** via a Kokoro-compatible OpenAI speech endpoint
+- **Verified delivery**: every segment is confirmed by message content/type in the conversation, not by click or message count
 - **Real-time message handling** via WebSocket interception
 - **Dashboard** at `localhost:7860` for live monitoring and config
 - **Hot-reload config** from dashboard/API without restart
@@ -73,6 +75,18 @@ If Instagram requests 2FA during login, Auroic pauses startup and waits for OTP 
 
 The bot auto-detects its own Facebook ID at boot and reconnects automatically after page/context failures.
 
+#### Required Chromium flags
+
+Voice notes depend on a working in-page `AudioContext` and synthetic microphone. Chromium must be launched with:
+
+```bash
+--disable-features=AudioServiceOutOfProcess,AudioServiceSandbox \
+--autoplay-policy=no-user-gesture-required \
+--use-fake-ui-for-media-stream --use-fake-device-for-media-stream
+```
+
+Without the audio feature flags, `AudioContext` stays suspended (`currentTime = 0`) and native `getUserMedia` hangs. Auroic injects a capture bridge (`src/automation/voiceCapture.ts`) through `context.addInitScript()` *and* the already-loaded document, so Instagram records the TTS stream instead of Chromium's fake microphone.
+
 ### Event Bus
 
 All parsed events are emitted through a shared `EventEmitter`.
@@ -89,7 +103,8 @@ Each message follows this flow:
 5. Build context window: H1-H5 history + C1-C3 candidates.
 6. Ask the local router for `TYPE`, `TARGET`, `EFFORT`, `TITLE`.
 7. Resolve target candidate and dispatch action.
-8. Mark candidate batch processed.
+8. Parse text replies into ordered segments (`text`, `sticker`, `gif`, `voice`, `music`) and deliver each one, gating on verified conversation evidence.
+9. Mark candidate batch processed.
 
 SQLite processing locks prevent duplicate handling and stale locks are cleared at boot.
 
@@ -109,12 +124,21 @@ Router output fields:
 
 ### Action Types
 
-| Type     | Behavior                                               |
-| -------- | ------------------------------------------------------ |
-| `text`   | Generate reply with LLM using history + target message |
-| `react`  | Add emoji reaction from `TITLE`                        |
-| `ignore` | Skip processing                                        |
-| `media`  | Try sticker first, then GIF fallback using `TITLE`     |
+| Type     | Behavior                                                                 |
+| -------- | ------------------------------------------------------------------------ |
+| `text`   | Generate a reply with the LLM and deliver its parsed segments in order    |
+| `react`  | Add emoji reaction from `TITLE`                                          |
+| `ignore` | Skip processing                                                          |
+| `media`  | Try sticker first, then GIF fallback using `TITLE`                       |
+
+Text replies use a compact multimodal contract. The model may interleave plain text with:
+
+- `[sticker: short visual description]`
+- `[gif: short visual search description]`
+- `[voice: exact words to speak]`
+- `[music: song title or artist]`
+
+Tokens are parsed by `src/response/protocol.ts`; only these four types are accepted and each needs a non-empty value.
 
 ### Runtime Configuration
 
@@ -165,8 +189,11 @@ Hono server runs on **http://localhost:7860** for live monitoring and config edi
 
 ### Chat Interaction
 
-DOM actions use index-based alignment between DB rows and DOM message groups.
-Window size is capped to `min(10, DOM groups, DB rows)` to avoid index mismatches.
+DOM actions are scoped per message: rows are discovered via `data-mid` and the `Message actions` toolbar, never by page-wide index alignment.
+
+Delivery verification takes a content/type/direction snapshot of outgoing rows before an action and waits for a *new* matching row afterwards. Message counts are not used because Instagram virtualizes the conversation list.
+
+Media pickers are state-aware: the visible `[role="dialog"]:has([role="tablist"])` is the only reliable open signal, and panels are selected by their search placeholder (`Search stickers`, `Search GIPHY`, `Search music`) rather than fixed tab indices.
 
 ### Command System
 
@@ -175,31 +202,37 @@ They are matched by aliases/keywords and require slash-delimited command text.
 
 **Available Commands:**
 
-| Command           | Trigger Keywords        | Action Type | Description                                       |
-| ----------------- | ----------------------- | ----------- | ------------------------------------------------- | --- |
-| `send_gif`        | `gif`, `meme`           | media       | Search and send a GIF matching the query          |
-| `send_sticker`    | `sticker`               | media       | Search and send a sticker                         |
-| `send_voice_note` | `voice`, `speak`        | media       | Generate TTS audio and send as voice note         |
-| `play_music`      | `play`, `music`, `song` | media       | Find and play music via Instagram's native player |     |
+| Command           | Trigger Keywords        | Action Type | Description                                        |
+| ----------------- | ----------------------- | ----------- | -------------------------------------------------- |
+| `send_gif`        | `gif`, `meme`           | media       | Search and send a GIF matching the query           |
+| `send_sticker`    | `sticker`               | media       | Search and send a sticker                          |
+| `send_voice_note` | `voice`, `speak`        | media       | Generate TTS audio and send as a voice note        |
+| `play_music`      | `play`, `music`, `song` | media       | Find and play music via Instagram's native player  |
 
 Commands are managed via `config.db` and can be enabled/disabled, aliased, and filtered per-command through the dashboard.
 
+Handlers only report success after the delivery verifier confirms the message in the conversation; otherwise the action is recorded with `execution_status = failed`.
+
+**Voice notes:** Instagram Web silently discards a voice note while a native reply context is active (the composer clears, but no upload/send request is made). Auroic therefore clears any reply context and sends voice notes as direct messages.
+
 ### Text-to-Speech (TTS)
 
-Auroic uses a local **Kokoro ONNX FastAPI service** for TTS at `http://localhost:8000/tts`. TTS is optional and used by voice note commands.
+Auroic uses any **OpenAI-compatible speech endpoint** (a local Kokoro FastAPI service or a hosted one). TTS is optional and used by voice-note commands.
 
 **Current behavior:**
 
-- Runtime config uses `tts.voice` only, which maps to Kokoro's voice options
-- The app sends `{ text, voice, speed }` to the local `/tts` endpoint
-- TTS output is returned as WAV audio and attached as a voice note
+- Endpoint: `POST {TTS_API_URL}/v1/audio/speech` (default base `http://localhost:8880`)
+- Request body: `{ model, input, voice, speed: 1 }`
+- The response is decoded as WAV audio, played into the browser's synthetic microphone stream, and attached as a voice note
+- The configured `tts.voice` wins; otherwise a per-language voice is chosen (for example `en` → `af_sarah`, `hi` → `hf_beta`)
+- Input text is normalized to native script before synthesis
+- Voice text is capped at 220 characters and rendered audio at 20 seconds; oversized audio is rejected before recording
 
-**Supported voice keys:**
+**Configuration:**
 
-- `alpha`
-- `beta`
-- `omega`
-- `psi`
+- Runtime config: `tts.voice`, `tts.model` in `config.db`
+- Env overrides: `TTS_API_URL` (or `KOKORO_TTS_API_URL`), `TTS_MODEL`, `TTS_TIMEOUT_MS`
+- `TTS_TIMEOUT_MS` defaults to `20000`; slower hosted endpoints can raise it without changing code
 
 ---
 
@@ -207,14 +240,15 @@ Auroic uses a local **Kokoro ONNX FastAPI service** for TTS at `http://localhost
 
 ### Prerequisites
 
-| Requirement         | Version/Details                                 |
-| ------------------- | ----------------------------------------------- |
-| Node.js             | ≥ 20 LTS                                        |
-| Ollama              | Local router inference service (`ollama serve`) |
-| Router Model        | `auroic-router:latest` in Ollama (**Required**) |
-| TTS Runtime         | Local FastAPI service (`models/kokoro_tts/app.py`) |
-| Docker              | ≥ 24 _(optional)_                               |
-| PipeWire/PulseAudio | Required for TTS voice note recording (Linux)   |
+| Requirement         | Version/Details                                    |
+| ------------------- | -------------------------------------------------- |
+| Node.js             | ≥ 20 LTS                                           |
+| Ollama              | Local router inference service (`ollama serve`)    |
+| Router Model        | `auroic-router:latest` in Ollama (**Required**)    |
+| TTS Runtime         | OpenAI-compatible speech service _(optional)_      |
+| Docker              | ≥ 24 _(optional)_                                  |
+
+No host audio stack (PipeWire/PulseAudio) is required: voice notes are recorded by feeding TTS audio into a synthetic microphone stream inside Chromium.
 
 ---
 
@@ -246,11 +280,12 @@ Set `router.hostUrl` and `router.model` in `config.db` (Dashboard → Config →
 
 #### 2. TTS Model (**Optional**)
 
-Kokoro TTS runs through the local Python service in `models/kokoro_tts/app.py`.
+TTS can be served by the bundled Kokoro FastAPI service (`models/kokoro_tts/app.py`) or any OpenAI-compatible speech endpoint.
 
 - The service loads Kokoro ONNX assets from Hugging Face
-- TTS endpoint: `POST http://localhost:8000/tts`
-- Request body: `{ "text": "...", "voice": "alpha|beta|omega|psi", "speed": 1.0 }`
+- TTS endpoint: `POST {TTS_API_URL}/v1/audio/speech` (default `http://localhost:8880`)
+- Request body: `{ "model": "tts-1", "input": "...", "voice": "af_sarah", "speed": 1 }`
+- Set `tts.voice` and `tts.model` in `config.db` (Dashboard → Config → TTS)
 
 ### Configuration
 
@@ -277,6 +312,11 @@ AI_API_KEY=your_api_key
 DB_PATH=./data/state.db
 CHROMIUM_PROFILE_DIR=./data/chrome-auroic
 CONFIG_DB_PATH=./data/config.db
+
+# TTS (optional)
+TTS_API_URL=http://localhost:8880
+TTS_MODEL=tts-1
+TTS_TIMEOUT_MS=20000
 ```
 
 **Runtime configuration** (triggers, prompts, LLM effort models, router host/model/options, commands, TTS) is stored in `config.db` and can be edited via:
@@ -400,6 +440,10 @@ Each field accepts multiple values. `onReply: true` enables reply-based activati
 - **Batch marking** marks candidate messages processed after each run.
 - **Auto reconnect** restores session after browser/page failures.
 - **Self-filtering** ignores bot-owned messages using runtime-detected `fbId`.
+- **Delivery verification** confirms outgoing text/media by content, type, and direction; message counts are never used.
+- **Verified command status** persists `execution_status = failed` when a handler cannot confirm delivery.
+- **State-aware UI automation** uses visible state (picker dialog, tab placeholder, recording controls) instead of fixed indices or click acknowledgements.
+- **Synthetic voice capture** proves the recorder is consuming the TTS stream before sending, so the native fake microphone can never leak into a note.
 - **`<think>` stripping** removes reasoning traces before sending replies.
 - **Graceful shutdown** closes DB and browser on `SIGINT`/`SIGTERM`.
 - **Automation lock** serializes DOM actions to avoid races.
@@ -413,6 +457,8 @@ Each field accepts multiple values. `onReply: true` enables reply-based activati
 - Browser disconnects are recovered automatically.
 - Rate limits (`429`/`503`) honor `Retry-After`.
 - TTS failures degrade gracefully without crashing the pipeline.
+- Delivery failures are retried once where the media is still valid, then reported as failed instead of being marked sent.
+- Instagram Web drops voice notes while a reply context is active, so voice notes are always sent directly.
 
 ---
 

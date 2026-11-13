@@ -63,6 +63,7 @@ const SELECTORS = Object.freeze({
   // selectors with "[role="dialog"] when used with dialog.locator(), and never
   // run them page-wide.
   gifDialog: '[role="dialog"]',
+  mediaDialog: '[role="dialog"]:has([role="tablist"])',
   mediaTabList: '[role="tablist"]',
   mediaTab: '[role="tab"]',
   gifSearchInput: 'input[name="GifSearch"]',
@@ -75,8 +76,22 @@ const SELECTORS = Object.freeze({
   // MEDIA PICKER
   // Result tiles, scoped to the picker dialog. Never used page-wide.
   mediaItemButton: 'div[role="button"]:not([role="tab"]):has(img), div[role="button"]:not([role="tab"]):has(video)',
+  musicTrackRow: 'div[role="button"]:has(img)',
   musicSendButton:
     'div[role="button"]:has(svg path[d^="m22.887"]), div[role="button"]:has(svg[data-name*="Layer 1"])',
+
+  // VOICE NOTE RECORDING / PREVIEW
+  voiceStopButton: 'div[role="button"][aria-label="Stop recording"]',
+  voiceCancelButton: 'div[role="button"][aria-label="Close Button"]',
+  voiceTimer: '[role="timer"]',
+  voiceWaveform: 'svg[aria-label*="Waveform" i]',
+  voiceProgress: '[role="slider"][aria-label*="Audio progress" i]',
+
+  // OUTGOING MESSAGE DIRECTION
+  // The action toolbar's aria-label includes the sender, e.g.
+  // "React to message from auroic.ai". Used to identify our own messages
+  // without relying on virtualization-sensitive message counts or geometry.
+  outgoingMessageAction: '[aria-label^="React to message from"]',
 
   // MODALS
   closeModal: '[aria-label*="Close"], [aria-label*="Dismiss"]',

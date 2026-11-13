@@ -4,7 +4,7 @@ import { chatCompletion, ChatMessage, resolveModel as resolveLlmModel } from "@/
 const DEFAULT_BASE_URL = "http://localhost:8880";
 const DEFAULT_MODEL = "tts-1";
 const DEFAULT_VOICE = "hm_omega";
-const TIMEOUT_MS = 5000;
+const TIMEOUT_MS = Number(process.env.TTS_TIMEOUT_MS ?? 20_000);
 const DEFAULT_LANG = "und";
 
 const LANGUAGE_DEFAULT_VOICES: Record<string, string> = {

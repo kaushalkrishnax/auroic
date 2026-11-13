@@ -2,6 +2,7 @@ import { chromium } from "playwright-core";
 import type { Browser, BrowserContext, Page, WebSocket } from "playwright-core";
 import getConfig from "@/runtime/index.js";
 import { attachDataMidsForRecentWindow } from "@/automation/chat.js";
+import { voiceCaptureInit } from "@/automation/voiceCapture.js";
 import {
   ensureChatPage,
   initTabPool,
@@ -263,6 +264,16 @@ export async function connectBrowser(): Promise<{
         });
       } catch {
         // Best effort
+      }
+
+      try {
+        // Install before page scripts so Instagram cannot capture the native
+        // fake-microphone stream or the native MediaRecorder constructor.
+        await existingContext.addInitScript(voiceCaptureInit);
+      } catch (initErr) {
+        logger.warn("Failed to install voice capture init script", {
+          error: (initErr as Error).message,
+        });
       }
 
       existingContext.on("close", () => {

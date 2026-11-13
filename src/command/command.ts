@@ -165,7 +165,9 @@ export async function classifyCommand(
   };
 }
 
-export async function executeCommand(context: ActionContext): Promise<void> {
+export async function executeCommand(
+  context: ActionContext,
+): Promise<boolean> {
   const command = context.classifiedCommand!;
   const handler = getCommandHandler(command.commandName);
 
@@ -173,7 +175,7 @@ export async function executeCommand(context: ActionContext): Promise<void> {
     logger.warn("No handler found for command", {
       commandName: command.commandName,
     });
-    return;
+    return false;
   }
 
   try {
@@ -190,11 +192,13 @@ export async function executeCommand(context: ActionContext): Promise<void> {
     logger.info("Command executed successfully", {
       commandName: command.commandName,
     });
+    return true;
   } catch (err) {
     logger.error("Command execution failed", {
       commandName: command.commandName,
       error: (err as Error).message,
       stack: (err as Error).stack,
     });
+    return false;
   }
 }
