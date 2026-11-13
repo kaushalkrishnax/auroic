@@ -1174,38 +1174,39 @@ async function openMediaTab(
 ): Promise<Locator | null> {
   const conversation = page.locator(SELECTORS.conversation).first();
   const composer = conversation.locator(SELECTORS.messageComposer).first();
-  let dialog = page
-    .locator(SELECTORS.gifDialog)
-    .filter({ has: page.locator(SELECTORS.mediaTabList) })
-    .last();
-  const alreadyOpen = await dialog.isVisible().catch(() => false);
+  const btn = composer.locator(SELECTORS.gifStickerButton).first();
+  if (!(await visible(btn, 3000))) {
+    logger.warn("openMediaTab: GIF/sticker button not visible");
+    return null;
+  }
 
-  if (!alreadyOpen) {
-    const btn = composer.locator(SELECTORS.gifStickerButton).first();
-    if (!(await visible(btn, 3000))) {
-      logger.warn("openMediaTab: GIF/sticker button not visible");
-      return null;
-    }
+  const isExpanded =
+    (await btn.getAttribute("aria-expanded").catch(() => null)) === "true";
 
+  if (!isExpanded) {
     try {
       await btn.click({ timeout: 4000, noWaitAfter: true });
     } catch (err) {
-      logger.warn("openMediaTab: GIF/sticker button click failed, trying dispatchEvent", {
-        error: (err as Error).message,
-      });
+      logger.warn(
+        "openMediaTab: GIF/sticker button click failed, trying dispatchEvent",
+        {
+          error: (err as Error).message,
+        },
+      );
       await btn.dispatchEvent("click").catch(() => null);
     }
+    await sleep(200);
+  }
 
-    dialog = page
-      .locator(SELECTORS.gifDialog)
-      .filter({ has: page.locator(SELECTORS.mediaTabList) })
-      .last();
-    if (!(await visible(dialog, 5000))) {
-      logger.warn(
-        "openMediaTab: dialog did not appear after GIF/sticker button click",
-      );
-      return null;
-    }
+  const dialog = page
+    .locator(SELECTORS.gifDialog)
+    .filter({ has: page.locator(SELECTORS.mediaTabList) })
+    .last();
+  if (!(await visible(dialog, 5000))) {
+    logger.warn(
+      "openMediaTab: dialog did not appear after GIF/sticker button click",
+    );
+    return null;
   }
 
   const tabList = dialog.locator(SELECTORS.mediaTabList).first();
@@ -1242,22 +1243,7 @@ async function openMediaTab(
         return null;
       }
     }
-
-    const deadline = Date.now() + 3000;
-    let selected = false;
-    while (Date.now() < deadline) {
-      const val = await tab.getAttribute("aria-selected").catch(() => null);
-      if (val === "true") {
-        selected = true;
-        break;
-      }
-      await sleep(100);
-    }
-
-    if (!selected) {
-      logger.warn("openMediaTab: tab did not become selected", { tabIndex });
-      return null;
-    }
+    await sleep(300);
   }
 
   const panelReady = dialog
@@ -1662,26 +1648,63 @@ export async function playMusic(
 
     logger.info("Opened music tab, searching for track…", { query });
 
-    const found = await searchAndSelectMedia(
-      mediaDialog,
-      SELECTORS.musicSearchInput,
-      query,
-      0,
-    );
-    if (!found) {
+    const searchInput = mediaDialog
+      .locator(
+        'input[placeholder*="Search music"], input[aria-label*="Search music"], input[name="GifSearch"]',
+      )
+      .first();
+    if (!(await visible(searchInput, 5000))) {
+      logger.warn("playMusic: music search input not visible");
       await closeMediaByFocusingComposer(page);
-      logger.warn("No music results found for query", { query });
       return false;
     }
 
-    if (
-      !(await click(mediaDialog.locator(SELECTORS.musicSendButton).first()))
-    ) {
-      logger.warn("Music send button not found");
+    await searchInput.fill(sanitizeMediaTitle(query));
+    await sleep(1500);
+
+    const trackItems = mediaDialog.locator('div[role="button"]:has(img)');
+    try {
+      await trackItems.first().waitFor({ state: "visible", timeout: 6000 });
+    } catch {
+      logger.warn("playMusic: no music results found for query", { query });
+      await closeMediaByFocusingComposer(page);
       return false;
     }
 
-    logger.info("Music track played", { query });
+    // Click first track item to preview and reveal the floating player bar
+    await trackItems.first().click();
+    await sleep(600);
+
+    // Locate the right-arrow send button in the bottom floating player toolbar
+    const sendBtn = mediaDialog.locator(SELECTORS.musicSendButton).last();
+    if (!(await visible(sendBtn, 5000))) {
+      logger.warn(
+        "playMusic: send arrow button not visible in music player bar",
+        { query },
+      );
+      await closeMediaByFocusingComposer(page);
+      return false;
+    }
+
+    const conversation = page.locator(SELECTORS.conversation).first();
+    const messageList = conversation.locator(SELECTORS.messageList).first();
+    const beforeCount = await messageList
+      .locator(SELECTORS.messageContainer)
+      .count();
+
+    await sendBtn.click();
+    await sleep(1000);
+
+    const verified = await waitForNewMessage(page, beforeCount, 10000);
+    if (!verified) {
+      logger.warn(
+        "playMusic: sent but message did not appear in conversation",
+        { query },
+      );
+      return false;
+    }
+
+    logger.info("Music track played and verified", { query });
     return true;
   } catch (err) {
     logger.warn("Play music failed", { error: (err as Error).message });
@@ -1733,11 +1756,8 @@ export async function sendVoiceNote(
 
     // Ensure composer text input is clear so the Voice Clip button is visible
     const input = composer.locator(SELECTORS.messageInput).first();
-    const currentText = await readComposerText(input);
-    if (currentText.trim().length > 0) {
-      await clearComposer(input);
-      await page.waitForTimeout(150);
-    }
+    await input.fill("").catch(() => null);
+    await page.waitForTimeout(200);
 
     const buffer = await generateSpeechBuffer(text);
 
@@ -1752,8 +1772,41 @@ export async function sendVoiceNote(
         window.AudioContext || (window as any).webkitAudioContext
       )();
       win.mixedDestination = win.audioContext.createMediaStreamDestination();
+
+      if (!navigator.mediaDevices) {
+        (navigator as any).mediaDevices = {};
+      }
       navigator.mediaDevices.getUserMedia = async (constraints) =>
         constraints?.audio ? win.mixedDestination.stream : null;
+
+      navigator.mediaDevices.enumerateDevices = async () => [
+        {
+          deviceId: "default",
+          kind: "audioinput",
+          label: "Virtual Microphone",
+          groupId: "default",
+          toJSON() {
+            return this;
+          },
+        } as MediaDeviceInfo,
+      ];
+
+      if (navigator.permissions && navigator.permissions.query) {
+        const origQuery = navigator.permissions.query.bind(
+          navigator.permissions,
+        );
+        navigator.permissions.query = async (desc: any) => {
+          if (desc?.name === "microphone") {
+            return {
+              state: "granted",
+              name: "microphone",
+              onchange: null,
+            } as any;
+          }
+          return origQuery(desc);
+        };
+      }
+
       if (win.audioContext.state === "suspended") {
         await win.audioContext.resume();
       }
@@ -1797,12 +1850,23 @@ export async function sendVoiceNote(
       source.buffer = win.currentAudioBuffer;
       source.connect(gain);
       gain.connect(win.mixedDestination);
+
+      // Mute physical speakers so no sound blasts out of the machine
+      const mute = win.audioContext.createGain();
+      mute.gain.value = 0;
+      source.connect(mute);
+      try {
+        mute.connect(win.audioContext.destination);
+      } catch {
+        // Fallback if destination not available
+      }
+
       source.start(0);
       return source.buffer.duration;
     });
 
-    // Instagram voice messages require a minimum duration (at least 1.2s)
-    const playWaitMs = Math.max(durationSec, 1.2) * 1000 + 400;
+    // Instagram voice messages require a minimum duration (at least 1.5s)
+    const playWaitMs = Math.max(durationSec, 1.8) * 1000 + 500;
     await page.waitForTimeout(playWaitMs);
 
     const messageList = conversation.locator(SELECTORS.messageList).first();
@@ -1811,7 +1875,7 @@ export async function sendVoiceNote(
       .count();
 
     const sendBtn = composer.locator(SELECTORS.sendVoiceNoteButton).first();
-    if (!(await visible(sendBtn, 3000))) {
+    if (!(await visible(sendBtn, 4000))) {
       logger.warn("Send voice note button not visible during recording", {
         chatId,
       });
@@ -1830,7 +1894,7 @@ export async function sendVoiceNote(
 
     // Wait for the recording UI to close
     const recordingClosed = await stopRecordingBtn
-      .waitFor({ state: "hidden", timeout: 4000 })
+      .waitFor({ state: "hidden", timeout: 5000 })
       .then(() => true)
       .catch(() => false);
 
@@ -1863,7 +1927,33 @@ export async function sendVoiceNote(
       (window as any).currentAudioBuffer = null;
     });
 
-    const verified = await waitForNewMessage(page, beforeCount, 10000);
+    const verified = await page
+      .waitForFunction(
+        (payload: { listSel: string; itemSel: string; before: number }) => {
+          const list = document.querySelector(payload.listSel);
+          if (!list) return false;
+          const items = list.querySelectorAll(payload.itemSel);
+          if (items.length > payload.before) return true;
+          const last = items[items.length - 1];
+          if (last) {
+            return Boolean(
+              last.querySelector('svg[aria-label*="Waveform" i]') ||
+                last.textContent?.includes("View transcription") ||
+                last.textContent?.includes("Sending"),
+            );
+          }
+          return false;
+        },
+        {
+          listSel: SELECTORS.messageList,
+          itemSel: SELECTORS.messageContainer,
+          before: beforeCount,
+        },
+        { timeout: 8000 },
+      )
+      .then(() => true)
+      .catch(() => false);
+
     if (!verified) {
       logger.warn("Voice note sent but did not appear in conversation", {
         chatId,

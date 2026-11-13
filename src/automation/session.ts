@@ -229,6 +229,42 @@ export async function connectBrowser(): Promise<{
         });
       }
 
+      try {
+        await existingContext.addInitScript(() => {
+          if (navigator.permissions && navigator.permissions.query) {
+            const origQuery = navigator.permissions.query.bind(navigator.permissions);
+            navigator.permissions.query = async (desc: any) => {
+              if (desc?.name === "microphone") {
+                return {
+                  state: "granted",
+                  name: "microphone",
+                  onchange: null,
+                } as any;
+              }
+              return origQuery(desc);
+            };
+          }
+          if (navigator.mediaDevices) {
+            const origEnum = navigator.mediaDevices.enumerateDevices?.bind(navigator.mediaDevices);
+            navigator.mediaDevices.enumerateDevices = async () => {
+              const devices = origEnum ? await origEnum().catch(() => []) : [];
+              if (!devices.some((d: any) => d.kind === "audioinput")) {
+                devices.push({
+                  deviceId: "default",
+                  kind: "audioinput",
+                  label: "Virtual Microphone",
+                  groupId: "default",
+                  toJSON() { return this; },
+                } as MediaDeviceInfo);
+              }
+              return devices;
+            };
+          }
+        });
+      } catch {
+        // Best effort
+      }
+
       existingContext.on("close", () => {
         if (context !== existingContext) return;
         stopPolling();

@@ -75,7 +75,8 @@ const SELECTORS = Object.freeze({
   // MEDIA PICKER
   // Result tiles, scoped to the picker dialog. Never used page-wide.
   mediaItemButton: 'div[role="button"]:not([role="tab"]):has(img), div[role="button"]:not([role="tab"]):has(video)',
-  musicSendButton: 'div[role="button"]:has(div[role="button"]:has(svg[data-name*="Layer 1"]))',
+  musicSendButton:
+    'div[role="button"]:has(svg path[d^="m22.887"]), div[role="button"]:has(svg[data-name*="Layer 1"])',
 
   // MODALS
   closeModal: '[aria-label*="Close"], [aria-label*="Dismiss"]',
